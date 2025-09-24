@@ -31,7 +31,8 @@ class RealSenseLocalizationStreamer:
                  tracker_max_age = 5,
                  show_windows=True,
                  on_detections=None,
-                 on_poses=None):
+                 on_poses=None,
+                 on_localizaion=None):
         
         self.det_model = YOLO(yolo_det_weights)
         self.pose_model = YOLO(yolo_pose_weights)
@@ -39,11 +40,13 @@ class RealSenseLocalizationStreamer:
         self.on_detections = on_detections
         self.on_poses = on_poses
         self.show_windows = show_windows
+        self.on_localization = on_localizaion
         
         self.pipeline = rs.pipeline()
         self.config = rs.config()
         self.config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
         self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+        self.config.enable_stream(rs.stream.infrared, 1, 640, 480, rs.format.y8, 30)
         self.profile = self.pipeline.start(self.config)
 
         depth_sensor = self.profile.get_device().first_depth_sensor()
@@ -51,16 +54,29 @@ class RealSenseLocalizationStreamer:
         self.align = rs.align(rs.stream.color)
         
         self.marker_length_m = 0.20
-        self.marker_ids = {0, 1, 2, 3}
+        self.marker_ids = set(range(12))
         marker_gap_m = 0.30
-        origin_offset = np.array([marker_gap_m, marker_gap_m, 0.0], dtype=np.float32)
+        self.origin_offset = np.array([marker_gap_m, marker_gap_m, 0.0], dtype=np.float32)
 
-        self.marker_world_coords = {
-            0: np.array([0.0, 0.0, 0.0], dtype=np.float32) - origin_offset,
-            1: np.array([marker_gap_m, 0.0, 0.0], dtype=np.float32) - origin_offset,
-            2: np.array([0.0, marker_gap_m, 0.0], dtype=np.float32) - origin_offset,
-            3: np.array([marker_gap_m, marker_gap_m, 0.0], dtype=np.float32) - origin_offset
+        # 행렬 배치: 3행 x 4열, 0번은 오른쪽 아래에서 시작
+        raw_positions = {
+            0:  np.array([0.0, 0.0, 0.0], dtype=np.float32),
+            1:  np.array([0.3, 0.0, 0.0], dtype=np.float32),
+            2:  np.array([0.6, 0.0, 0.0], dtype=np.float32),
+            3:  np.array([0.9, 0.0, 0.0], dtype=np.float32),
+
+            4:  np.array([0.0, 0.3, 0.0], dtype=np.float32),
+            5:  np.array([0.3, 0.3, 0.0], dtype=np.float32),
+            6:  np.array([0.6, 0.3, 0.0], dtype=np.float32),
+            7:  np.array([0.9, 0.3, 0.0], dtype=np.float32),
+
+            8:  np.array([0.0, 0.6, 0.0], dtype=np.float32),
+            9:  np.array([0.3, 0.6, 0.0], dtype=np.float32),
+            10: np.array([0.6, 0.6, 0.0], dtype=np.float32),
+            11: np.array([0.9, 0.6, 0.0], dtype=np.float32),
         }
+        origin_shift = raw_positions[0] - self.origin_offset
+        self.marker_workd_pos = {mid: pos - origin_shift for mid, pos in raw_positions.items()}
         
         self.axis_scale = 0.15
         self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
@@ -194,7 +210,7 @@ class RealSenseLocalizationStreamer:
                     tracks = self.tracker.update_tracks(tracker_bboxes, frame=color_image)
                     for t in tracks:
                         if not t.is_confirmed(): continue
-                        l, ttop, r, b = t.to_ltrb()
+                        l, _, r, b = t.to_ltrb()
                         # 추적 ID와 함께 감지된 클래스 이름도 표시 (DeepSORT는 클래스 정보를 직접 관리하지 않음)
                         cv2.putText(color_image, f'ID:{str(t.track_id)}', (int(l), max(0, int(b) - 8)), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
@@ -237,15 +253,16 @@ class RealSenseLocalizationStreamer:
                                 # 마커의 2d 이미지 좌표 가져오기
                                 img_points.extend(corners[i].reshape(4, 2))
                         
-                        if len(obj_points) >= 4:
+                        if len(obj_points) >= 4: # marker를 4개 이상 인식하면 위치를 추정
                             # cv2.solvePnP 함수로 카메라 매트릭스 계산후 카메라의 회전(rvec_g), 이동(tvec_g) 값을 찾아 변환
                             # rgbd 카메라로 얻은 depth 정보는 실제 이 함수에 사용되지 않으나, solvePnP가 계산한 depth와 비교해서 신뢰성 얻음
                             ok, rvec_g, tvec_g = cv2.solvePnP(np.array(obj_points), np.array(img_points), self.K, self.dist)
                             if ok:
                                 R, _ = cv2.Rodrigues(rvec_g)
                                 pos = (-R.T @ tvec_g).flatten()
+                                pos -= self.origin_offset # translation
                                 ang = np.degrees(self._rotation_matrix_to_euler_angles(R.T))
-                                self._put_localization_text(color_image, pos, ang)
+                                # self._put_localization_text(color_image, pos, ang)
                                 
                                 # 계산된 카메라 현재 좌표를 UDP로 송신 (bird eye view)
                                 # (x, y, z, roll, pitch, yaw)
@@ -267,11 +284,6 @@ class RealSenseLocalizationStreamer:
                                     # (c) UDP로 타겟 좌표 보내기
                                     target_str = f"TARGET,{cls_name},{obj_world[0]},{obj_world[1]},{obj_world[2]}"
                                     self.sock.sendto(target_str.encode('utf-8'), self.server_address)
-
-
-
-
-
                                 
                     # --- 결과 출력 ---
                     if self.show_windows:
@@ -284,6 +296,7 @@ class RealSenseLocalizationStreamer:
                 if self.show_windows:
                     cv2.destroyAllWindows()
 
+# 직접 파일을 실행할때는 아래 코드 주석 해제후 실행
 # if __name__ == "__main__":
 #     streamer = RealSenseLocalizationStreamer(show_windows=True)
-#     streamer.run()
+#     streamer.run()0
