@@ -96,6 +96,12 @@ def main():
     sock.bind(server_address)
     sock.settimeout(0.02)  # ✅ 타임아웃으로 non-blocking: q 입력 즉시 반응
 
+    # --- 새 타겟 좌표 소켓 ---
+    target_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    target_sock.bind(('localhost', 12346))
+    target_sock.settimeout(0.02)
+
+
     base = np.full((MAP_PARAMS['size_px'], MAP_PARAMS['size_px'], 3), (240, 240, 240), dtype=np.uint8)
     draw_static_map_elements(base)
 
@@ -131,7 +137,28 @@ def main():
             # 데이터가 없어도 베이스를 계속 보여줌
             pass
         except Exception as e:
-            print(f"Bad packet | err={e}")
+            print(f"Bad packet (camera) | err={e}")
+
+        
+        #여기서 부터는 타겟 좌표 담당 
+        try:
+            t, _ = target_sock.recvfrom(1024)
+            tx, ty, tz = [float(p) for p in t.decode('utf-8').split(',')]
+
+            # 타겟 월드 좌표 → 맵 좌표 변환
+            px, py = world_to_map_coords((tx, ty))
+
+            # 파란 점으로 타겟 표시
+            cv2.circle(bev, (px, py), 8, (255, 0, 0), -1)
+            cv2.putText(bev, f"Target ({tx:.2f},{ty:.2f})", (px+10, py-10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255,0,0), 2)
+
+        except socket.timeout:
+            pass
+        except Exception as e:
+            print(f"Bad packet (target) | err={e}")
+
+        # --- 최종 출력 ---
 
         cv2.imshow("Bird's-Eye View", bev)
 

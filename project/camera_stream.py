@@ -86,6 +86,9 @@ class RealSenseLocalizationStreamer:
         
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.server_address = ('localhost', 12345) #데이터를 보낼 주소
+
+        self.target_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.target_server_address = ('localhost', 12346)   # 위 주소는 카메라 좌표 용, 타겟 좌표용 주소 생성
         
     def _read_frames(self):
         frames = self.pipeline.wait_for_frames()
@@ -189,7 +192,20 @@ class RealSenseLocalizationStreamer:
                             d_m = self._depth_at(depth_image, cx, cy)
                             if d_m is not None and 0.0 <= d_m <= self.MAX_DEPTH_M:
                                 valid_dets.append((cls_name, d_m, (x1, y1, x2, y2), (cx, cy), conf))
-                        
+                            
+                                # --- 타겟 좌표 UDP 송신 ---
+                                # 카메라 pos (이미 위에서 구한 값) + depth를 이용해 타겟 좌표 근사
+                                if 'pos' in locals():   # 카메라 월드 좌표가 계산된 경우만
+                                    target_x = pos[0]
+                                    target_y = pos[1]
+                                    target_z = d_m
+                                    coord_str = f"{target_x},{target_y},{target_z}"
+                                    self.target_sock.sendto(coord_str.encode('utf-8'),
+                                                            self.target_server_address)
+
+
+
+
                         if conf >= self.MIN_CONF_DET:
                             tracker_bboxes.append(([x1, y1, w, h], conf, cls_id))
                             if cls_name.lower() != 'person':
