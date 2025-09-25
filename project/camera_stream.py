@@ -195,13 +195,25 @@ class RealSenseLocalizationStreamer:
                             
                                 # --- 타겟 좌표 UDP 송신 ---
                                 # 카메라 pos (이미 위에서 구한 값) + depth를 이용해 타겟 좌표 근사
-                                if 'pos' in locals():   # 카메라 월드 좌표가 계산된 경우만
-                                    target_x = pos[0]
-                                    target_y = pos[1]
-                                    target_z = d_m
-                                    coord_str = f"{target_x},{target_y},{target_z}"
+                                # --- 타겟 좌표 UDP 송신 (실제 월드 좌표) ---
+                                if 'pos' in locals() and 'R' in locals() and 'tvec_g' in locals():
+                                    # 1) 픽셀 좌표 + 깊이 → 카메라 좌표계
+                                    fx, fy = self.K[0, 0], self.K[1, 1]
+                                    cx0, cy0 = self.K[0, 2], self.K[1, 2]
+                                    Xc = (cx - cx0) * d_m / fx
+                                    Yc = (cy - cy0) * d_m / fy
+                                    Zc = d_m
+                                    Pc = np.array([Xc, Yc, Zc])
+
+                                    # 2) 카메라 → 월드 좌표 변환
+                                    Pw = R.T @ (Pc - tvec_g.flatten())
+
+                                    # 3) UDP 송신
+                                    coord_str = f"{Pw[0]},{Pw[1]},{Pw[2]}"
                                     self.target_sock.sendto(coord_str.encode('utf-8'),
                                                             self.target_server_address)
+
+                                    print(f"[Target World Coord] {Pw}")
 
 
 
