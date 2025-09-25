@@ -3,7 +3,7 @@
 import rospy
 from geometry_msgs.msg import Twist
 from vision_msgs.msg import Detection2DArray
-
+from geometry_msgs.msg import Point
 
 
 class ServingRobotController:
@@ -14,6 +14,7 @@ class ServingRobotController:
         self.cmd_vel_pub = rospy.Publisher('/mobile_base/commands/velocity', Twist, queue_size=1) # ('cmd_vel')를 이걸로 바꿈
         # YOLO+RealSense 감지 결과 구독
         self.target_sub = rospy.Subscriber('/target', Detection2DArray, self.target_callback)
+        self.target_xyz_sub = rospy.Subscriber('/target_xyz', Point, self.xyz_callback)
 
         # 상태 변수들
         self.state = "SEARCH"
@@ -59,6 +60,9 @@ class ServingRobotController:
                 self.obstacle_detected = False
 
             rospy.loginfo(f"타겟 발견! 거리: {min_depth:.2f}m | 장애물 여부: {self.obstacle_detected}")
+    def xyz_callback(self, msg):
+        rospy.loginfo(f"타겟 좌표: x={msg.x}, y={msg.y}, z={msg.z}")
+
 
     def search_mode(self):
         """탐색 모드: 회전"""
