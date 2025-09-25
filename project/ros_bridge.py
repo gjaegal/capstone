@@ -1,6 +1,7 @@
 import rospy
 from std_msgs.msg import Header
 from vision_msgs.msg import Detection2DArray, Detection2D, ObjectHypothesisWithPose
+from geometry_msgs.msg import Point
 
 class TargetPublisherROS:
     """RealSenseYOLOStreamer의 on_detections 콜백을 받아 vision_msgs/Detection2DArray로 퍼블리시
@@ -9,6 +10,7 @@ class TargetPublisherROS:
         if not rospy.core.is_initialized():
             rospy.init_node(node_name, anonymous=True)
         self.pub = rospy.Publisher(topic, Detection2DArray, queue_size=queue_size)
+        self.target_pub = rospy.Publisher('/target_xyz', Point, queue_size=queue_size)
         
     def on_detections(self, dets):
         """
@@ -39,4 +41,11 @@ class TargetPublisherROS:
             
             msg.detections.append(det)
         self.pub.publish(msg)
+    
+    def on_localization(self, x, y, z):
+        point = Point()
+        point.x = x
+        point.y = y
+        point.z = z
+        self.target_pub.publish(point)
         
