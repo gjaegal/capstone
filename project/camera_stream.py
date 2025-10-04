@@ -178,6 +178,7 @@ class RealSenseLocalizationStreamer:
                 det_results = self.det_model(color_image, verbose=False)
                 tracker_bboxes = []
                 valid_dets = []
+                det_positions = []
                 
                 for r in det_results:
                     for box in r.boxes:
@@ -212,6 +213,7 @@ class RealSenseLocalizationStreamer:
                                     coord_str = f"{Pw[0]},{Pw[1]},{Pw[2]}"
                                     self.target_sock.sendto(coord_str.encode('utf-8'),
                                                             self.target_server_address)
+                                    det_positions.append(Pw)
 
                                     print(f"[Target World Coord] {Pw}")
 
@@ -241,7 +243,7 @@ class RealSenseLocalizationStreamer:
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 
                 if self.on_detections is not None and valid_dets:
-                    self.on_detections(valid_dets)
+                    self.on_detections(valid_dets, Pw)
 
                 # --- ArUco 마커 기반 Localization ---
                 corners, ids, _ = self.aruco_detector.detectMarkers(color_image)

@@ -4,6 +4,7 @@ import rospy
 from geometry_msgs.msg import Twist
 from vision_msgs.msg import Detection2DArray
 from geometry_msgs.msg import Point
+from astar import astar, create_grid, discretize
 
 
 class ServingRobotController:
@@ -14,7 +15,7 @@ class ServingRobotController:
         self.cmd_vel_pub = rospy.Publisher('/mobile_base/commands/velocity', Twist, queue_size=1) # ('cmd_vel')를 이걸로 바꿈
         # YOLO+RealSense 감지 결과 구독
         self.target_sub = rospy.Subscriber('/target', Detection2DArray, self.target_callback)
-        self.target_xyz_sub = rospy.Subscriber('/target_xyz', Point, self.xyz_callback)
+        self.current_xyz_sub = rospy.Subscriber('/current_xyz', Point, self.current_xyz_callback)
 
         # 상태 변수들
         self.state = "SEARCH"
@@ -23,6 +24,8 @@ class ServingRobotController:
         self.serving_complete = False
         self.current_target_depth = float('inf')  # 현재 타겟까지 거리
         self.obstacle_detected = False            # RealSense 기반 장애물 감지 여부
+        self.current_position = (2.0, 2.0)        # 현재 로봇 위치 (x, y)
+        self.target_position = (0.0, 0.0)         # 목표 위치 (x, y)
 
         self.twist = Twist()
 
@@ -62,41 +65,50 @@ class ServingRobotController:
             rospy.loginfo(f"타겟 발견! 거리: {min_depth:.2f}m | 장애물 여부: {self.obstacle_detected}")
     def xyz_callback(self, msg):
         rospy.loginfo(f"타겟 좌표: x={msg.x}, y={msg.y}, z={msg.z}")
+        self.target_position = (msg.x, msg.y)
+
+    def current_xyz_callback(self, msg):
+        rospy.loginfo(f"현재 좌표: x={msg.x}, y={msg.y}, z={msg.z}")
+        self.current_position = (msg.x, msg.y)
 
 
     def search_mode(self):
-        """탐색 모드: 회전"""
-        rospy.loginfo("탐색 중... 회전")
+        """탐색 모드"""
+        # rospy.loginfo("탐색 중... ")
         if self.target_found:
             self.state = "APPROACH"
+            return
+        
+        if self.obstacle_detected:
+            self.avoid_obstacle()
         else:
-            if self.obstacle_detected:
-                timer = 0
-                while timer < 10:
-                    self.twist.linear.x = 0
-                    self.twist.angular.z = 0.5
-                    self.cmd_vel_pub.publish(self.twist)
-                    timer += 1
-            else:
-                self.twist.linear.x = 0.02
-                self.cmd_vel_pub.publish(self.twist)
+            self.twist.linear.x = 0.01
+            self.cmd_vel_pub.publish(self.twist)
 
     def approach_target(self):
         """타겟 접근"""
-        rospy.loginfo("타겟 발견! 접근 중...")
-        self.twist.linear.x = 0.2
-        self.cmd_vel_pub.publish(self.twist)
-        if self.obstacle_detected:
-            rospy.loginfo("장애물 감지! 회피 중...")
-            self.avoid_obstacle()
-        elif self.current_target_depth < 0.5:
-            self.state = "STOP"
-            rospy.loginfo("타겟에 도착!")
+        rospy.loginfo(f"타겟 발견! 현재 위치: {self.current_position}, 타겟 위치: {self.target_position}")
+        # self.twist.linear.x = 0.2
+        # self.cmd_vel_pub.publish(self.twist)
+        # if self.obstacle_detected:
+        #     rospy.loginfo("장애물 감지! 회피 중...")
+        #     self.avoid_obstacle()
+        # elif self.current_target_depth < 0.5:
+        #     self.state = "STOP"
+        #     rospy.loginfo("타겟에 도착!")
+        start = discretize(self.current_position)
+        goal = discretize(self.target_position)
+        obstacles = [(1,1), (1,2), (2,1), (2,2)]
+        grid = create_grid(obstacles)
+        path = astar(grid, start, goal)
+        for (x, y) in path:
+            rospy.loginfo(f"경로: {x}, {y}")
+
 
     def avoid_obstacle(self):
         """장애물 회피 (Depth 기반)"""
-        self.twist.angular.z = 0.8  # 회전하며 피하기
-        self.twist.linear.x = -0.1  # 살짝 후진
+        rospy.loginfo("장애물 회피 중...")
+        self.twist.angular.z = 0.8
         self.cmd_vel_pub.publish(self.twist)
 
     def stop_robot(self):

@@ -11,14 +11,18 @@ class TargetPublisherROS:
             rospy.init_node(node_name, anonymous=True)
         self.pub = rospy.Publisher(topic, Detection2DArray, queue_size=queue_size)
         self.target_pub = rospy.Publisher('/target_xyz', Point, queue_size=queue_size)
+        self.current_pub = rospy.Publisher('/current_xyz', Point, queue_size=queue_size)
         
-    def on_detections(self, dets):
+    def on_detections(self, dets, Pw=None):
         """
         dets: 다음 리스트 [cls_name, depth_m, (x1, y1, x2, y2), (cx, cy), conf]
+        Pw: target (x,y,z) in world coordinates
         """
         msg = Detection2DArray()
         msg.header = Header()
         msg.header.stamp = rospy.Time.now()
+
+        target_point = Point()
         
         for cls_name, depth_m, (x1, y1, x2, y2), (cx, cy), conf in dets:
             det = Detection2D()
@@ -40,12 +44,19 @@ class TargetPublisherROS:
             det.bbox.size_y = float(y2 - y1)
             
             msg.detections.append(det)
+
+        for (x, y, z) in Pw:
+            target_point.x = x
+            target_point.y = y
+            target_point.z = z
+
         self.pub.publish(msg)
+        self.target_pub.publish(target_point)
     
     def on_localization(self, x, y, z):
         point = Point()
         point.x = x
         point.y = y
         point.z = z
-        self.target_pub.publish(point)
+        self.current_pub.publish(point)
         
