@@ -15,10 +15,11 @@ class ServingRobotController:
         self.cmd_vel_pub = rospy.Publisher('/mobile_base/commands/velocity', Twist, queue_size=1) # ('cmd_vel')를 이걸로 바꿈
         # YOLO+RealSense 감지 결과 구독
         self.target_sub = rospy.Subscriber('/target', Detection2DArray, self.target_callback)
-        self.current_xyz_sub = rospy.Subscriber('/current_xyz', Point, self.current_xyz_callback)
+        self.current_point_sub = rospy.Subscriber('/current_point', Point, self.current_point_callback)
+        self.target_point_sub = rospy.Subscriber('/target_point', Point, self.target_point_callback)
 
         # 상태 변수들
-        self.state = "SEARCH"
+        self.state = "APPROACH"
         self.target_id = 1
         self.target_found = False
         self.serving_complete = False
@@ -63,11 +64,11 @@ class ServingRobotController:
                 self.obstacle_detected = False
 
             rospy.loginfo(f"타겟 발견! 거리: {min_depth:.2f}m | 장애물 여부: {self.obstacle_detected}")
-    def xyz_callback(self, msg):
+    def target_point_callback(self, msg):
         rospy.loginfo(f"타겟 좌표: x={msg.x}, y={msg.y}, z={msg.z}")
         self.target_position = (msg.x, msg.y)
 
-    def current_xyz_callback(self, msg):
+    def current_point_callback(self, msg):
         rospy.loginfo(f"현재 좌표: x={msg.x}, y={msg.y}, z={msg.z}")
         self.current_position = (msg.x, msg.y)
 
@@ -98,11 +99,13 @@ class ServingRobotController:
         #     rospy.loginfo("타겟에 도착!")
         start = discretize(self.current_position)
         goal = discretize(self.target_position)
-        obstacles = [(1,1), (1,2), (2,1), (2,2)]
+        rospy.loginfo(f"그리드 현재 위치: {start}, 그리드 타겟 위치: {goal}")
+        obstacles = [(1,1), (1,2), (2,1), (2,2)] # discretized 그리드 좌표에서 obstacle 위치
         grid = create_grid(obstacles)
         path = astar(grid, start, goal)
         for (x, y) in path:
             rospy.loginfo(f"경로: {x}, {y}")
+
 
 
     def avoid_obstacle(self):
