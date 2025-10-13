@@ -45,7 +45,7 @@ def main():
         tracker_max_age=5,
         show_windows=True,
         on_detections=target_pub.on_detections,  # /target으로 퍼블리시
-        on_localization=target_pub.on_localization,
+        publish_point=target_pub.publish_point,
         on_poses=on_poses_cb                      # 필요 시 별도 토픽으로 확장
     )
     
