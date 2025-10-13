@@ -1,3 +1,4 @@
+
 import pyrealsense2 as rs
 import numpy as np 
 import cv2
@@ -32,7 +33,7 @@ class RealSenseLocalizationStreamer:
                  show_windows=True,
                  on_detections=None,
                  on_poses=None,
-                 on_localization=None):
+                 publish_point=None):
         
         self.det_model = YOLO(yolo_det_weights)
         self.pose_model = YOLO(yolo_pose_weights)
@@ -40,7 +41,7 @@ class RealSenseLocalizationStreamer:
         self.on_detections = on_detections
         self.on_poses = on_poses
         self.show_windows = show_windows
-        self.on_localization = on_localization
+        self.publish_point = publish_point
         
         self.pipeline = rs.pipeline()
         self.config = rs.config()
@@ -216,6 +217,8 @@ class RealSenseLocalizationStreamer:
                                     det_positions.append(Pw)
 
                                     print(f"[Target World Coord] {Pw}")
+                                    # 타겟 좌표 publish
+                                    self.publish_point(Pw, "target")
 
 
 
@@ -243,7 +246,7 @@ class RealSenseLocalizationStreamer:
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 
                 if self.on_detections is not None and valid_dets:
-                    self.on_detections(valid_dets, Pw)
+                    self.on_detections(valid_dets)
 
                 # --- ArUco 마커 기반 Localization ---
                 corners, ids, _ = self.aruco_detector.detectMarkers(color_image)
@@ -284,8 +287,10 @@ class RealSenseLocalizationStreamer:
                             coord_str = f"{pos[0]},{pos[1]},{pos[2]},{ang[0]},{ang[1]},{ang[2]}"
                             self.sock.sendto(coord_str.encode('utf-8'), self.server_address)
 
-                            if self.on_localization is not None:
-                                self.on_localization(pos[0], pos[1], pos[2])
+                            # 로봇 현재 위치 좌표 publish
+                            if self.publish_point is not None:
+                                self.publish_point(pos, "current")
+
 
                             
 
