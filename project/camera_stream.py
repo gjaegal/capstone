@@ -6,13 +6,15 @@ from ultralytics import YOLO
 from deep_sort_realtime.deepsort_tracker import DeepSort
 import math
 import socket # UDP 통신을 위함
+import time
+import rospy
 
 class RealSenseLocalizationStreamer:
     """
     - 실시간 스트리밍, 객체 감지/추적, 자세 추정, 카메라 위치 추정 기능 통합
     """
 
-    TARGET_CLASSES = {'dining table', 'cookie', 'person'} # 탐지 목표 클래스
+    TARGET_CLASSES = {'dining table', 'cookie'}, 'cell phone' # 탐지 목표 클래스
     MIN_CONF_DET = 0.40
     MIN_CONF_POSE = 0.40
     MAX_DEPTH_M = 5.0
@@ -90,6 +92,15 @@ class RealSenseLocalizationStreamer:
 
         self.target_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.target_server_address = ('localhost', 12346)   # 위 주소는 카메라 좌표 용, 타겟 좌표용 주소 생성
+
+        self.current_position = None
+        self.publish_timer = rospy.Timer(rospy.Duration(2.0), self._publish_callback) # 현재 위치, t 초마다 publish 자동 실행
+    
+    def _publish_callback(self, event):
+        '''t초마다 publish'''
+        if self.current_position is not None and self.publish_point is not None:
+            self.publish_point(self.current_position, "current")
+
         
     def _read_frames(self):
         frames = self.pipeline.wait_for_frames()
@@ -172,6 +183,7 @@ class RealSenseLocalizationStreamer:
     def run(self):
         try:
             while True:
+                current_time = time.time()
                 depth_image, color_image = self._read_frames()
                 if depth_image is None: continue
 
@@ -217,6 +229,7 @@ class RealSenseLocalizationStreamer:
                                     det_positions.append(Pw)
 
                                     print(f"[Target World Coord] {Pw}")
+                                    
                                     # 타겟 좌표 publish
                                     self.publish_point(Pw, "target")
 
@@ -288,8 +301,9 @@ class RealSenseLocalizationStreamer:
                             self.sock.sendto(coord_str.encode('utf-8'), self.server_address)
 
                             # 로봇 현재 위치 좌표 publish
-                            if self.publish_point is not None:
-                                self.publish_point(pos, "current")
+                            # if self.publish_point is not None:
+                            #     self.publish_point(pos, "current")
+                            self.current_position = pos
 
 
                             
