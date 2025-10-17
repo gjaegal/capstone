@@ -27,6 +27,7 @@ class ServingRobotController:
         self.obstacle_detected = False            # RealSense 기반 장애물 감지 여부
         self.current_position = (2.0, 2.0)        # 현재 로봇 위치 (x, y)
         self.target_position = (0.0, 0.0)         # 목표 위치 (x, y)
+        self.prev_grid_sg = None # discretized grid에서의 (현재 xy, goal xy)
 
         self.twist = Twist()
 
@@ -101,10 +102,16 @@ class ServingRobotController:
         goal = discretize(self.target_position)
         rospy.loginfo(f"그리드 현재 위치: {start}, 그리드 타겟 위치: {goal}")
         obstacles = [(1,1), (1,2), (2,1), (2,2)] # discretized 그리드 좌표에서 obstacle 위치
-        grid = create_grid(obstacles)
-        path = astar(grid, start, goal)
-        for (x, y) in path:
-            rospy.loginfo(f"경로: {x}, {y}")
+        grid = create_grid(obstacles, grid_size=(200,100))
+        if self.prev_grid_sg != (start, goal):
+            self.prev_grid_sg = (start, goal)
+            path = astar(grid, start, goal)
+            for (x, y) in path:
+                rospy.loginfo(f"경로: {x}, {y}")
+            self.twist.linear.x = 0.1 # cm/s
+            start_time = rospy.Time.now().to_sec()
+            while rospy.Time.now().to_sec() - start_time < 1.0:
+                self.cmd_vel_pub.publish(self.twist)
 
 
 
