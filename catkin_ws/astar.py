@@ -83,10 +83,10 @@ def astar(grid, start, end):
     return None  # 경로가 없는 경우 None 반환
 
 
-def create_grid(obstacles=None):
+def create_grid(obstacles=None, grid_size=(7, 7)):
     # 주어진 장애물 좌표를 기반으로 2D 격자(grid) 생성      >>> 이게 현재 임시 그리드인 상황 
-    rows = 7
-    cols = 7
+    rows = grid_size[0]
+    cols = grid_size[1]
     grid = [[[] for _ in range(cols)] for _ in range(rows)]
     for i in range(rows):
         for j in range(cols):
@@ -96,15 +96,15 @@ def create_grid(obstacles=None):
                 grid[i][j] = 0  # 이동 가능
     return np.array(grid)
 
-def discretize(position, grid_size=1.0):
+def discretize(position, grid_x=1.0, grid_y=1.0):
     """연속 좌표를 격자 좌표로 변환"""
     x, y = position
-    return (int(x // grid_size), int(y // grid_size))
+    return (int(x // grid_x), int(y // grid_y))
 
 if __name__ == "__main__":
     # 테스트용 코드: 7x7 grid에서 장애물 설정     >> 이것도 테스트용으로 장애물 설정
     obstacles = [(3,3), (3,4), (4,3), (4,4)]
-    grid = create_grid(obstacles)
+    grid = create_grid(obstacles, grid_size=(20,10))
     print(grid)
 
     # 시작점과 목표점 설정     >> 이거도 시작점은 현재 카메라 좌표로, 목표점은 타겟 좌료로 변경
@@ -113,8 +113,8 @@ if __name__ == "__main__":
 
 
     # ROS 토픽(/current_xyz, /target_xyz)에서 받은 실시간 좌표 사용 >> 실제 할 때 사용
-    start = discretize((current_x, current_y), grid_size=0.2)
-    end = discretize((target_x, target_y), grid_size=0.2)
+    start = (0, 0)
+    end = (6, 6)
 
     # A* 알고리즘 실행
     path = astar(grid, start, end)
