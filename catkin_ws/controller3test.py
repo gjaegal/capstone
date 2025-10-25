@@ -1,10 +1,46 @@
 #!/usr/bin/env python3
 
-import rospy
-from geometry_msgs.msg import Twist
-from vision_msgs.msg import Detection2DArray
-from geometry_msgs.msg import Point
+# ======== [Windows 테스트용 더미 rospy 모듈 추가] ========
+try:
+    import rospy
+except ModuleNotFoundError:
+    import types, time
+    rospy = types.SimpleNamespace()
+    rospy.loginfo = print
+    rospy.logwarn = print
+    rospy.sleep = time.sleep
+    rospy.Time = types.SimpleNamespace(now=lambda: types.SimpleNamespace(to_sec=lambda: time.time()))
+    rospy.init_node = lambda name: print(f"[FAKE ROS] Node '{name}' initialized")
+    rospy.Subscriber = lambda *a, **k: None
+    rospy.Publisher = lambda *a, **k: types.SimpleNamespace(publish=lambda msg: None)
+    rospy.spin = lambda: None
+# =========================================================
+
+# ====== [Windows 환경 테스트용 ROS 메시지 더미 클래스] ======
+try:
+    from geometry_msgs.msg import Twist, Point
+    from vision_msgs.msg import Detection2DArray
+except ModuleNotFoundError:
+    import types
+    class Twist:
+        def __init__(self):
+            self.linear = types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            self.angular = types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+    class Point:
+        def __init__(self, x=0.0, y=0.0, z=0.0):
+            self.x, self.y, self.z = x, y, z
+    class Detection2DArray:
+        def __init__(self):
+            self.detections = []
+# ==========================================================
+
+
+
 from astar import astar, create_grid, discretize
+
+
+
+
 
 
 class ServingRobotController:
@@ -89,17 +125,23 @@ class ServingRobotController:
         """A* 경로를 따라 상하좌우로 이동"""
         rospy.loginfo(f"타겟 접근 시작! 현재 위치: {self.current_position}, 타겟 위치: {self.target_position}")
 
-        # 1현재 좌표 → 격자 좌표 변환
-        start = discretize(self.current_position)
-        goal = discretize(self.target_position)
-        rospy.loginfo(f"그리드 현재 위치: {start}, 그리드 타겟 위치: {goal}")
+        # # 1현재 좌표 → 격자 좌표 변환
+        # start = discretize(self.current_position)
+        # goal = discretize(self.target_position)
+        # rospy.loginfo(f"그리드 현재 위치: {start}, 그리드 타겟 위치: {goal}")
 
-        # 2️격자 및 장애물 생성
-        obstacles = [(1,1), (1,2), (2,1), (2,2)]
-        grid = create_grid(obstacles, grid_size=(200,100))
+        # # 2️격자 및 장애물 생성
+        # obstacles = [(1,1), (1,2), (2,1), (2,2)]
+        # grid = create_grid(obstacles, grid_size=(200,100))
 
-        # 3️A* 실행
-        path = astar(grid, start, goal)
+        # # 3️A* 실행
+        # path = astar(grid, start, goal)
+
+
+
+
+        path = [(0, 0), (1, 0), (2, 0), (2, 1), (2, 2)]
+
         if not path:
             rospy.logwarn("경로를 찾지 못했습니다. 탐색으로 복귀합니다.")
             self.state = "SEARCH"
@@ -137,9 +179,10 @@ class ServingRobotController:
                 rospy.loginfo("위로 이동 → 반시계 회전 후 직진")
                 # 반시계 방향 90도 회전
                 self.twist.angular.z = 0.5
-                start_time = rospy.Time.now().to_sec()
-                while rospy.Time.now().to_sec() - start_time < 1.6:
+                start_time = time.time()
+                while time.time() - start_time < 1.6:
                     self.cmd_vel_pub.publish(self.twist)
+                    time.sleep(0.1)
                 
                 self.stop_robot()
                 rospy.sleep(0.3)
@@ -151,9 +194,10 @@ class ServingRobotController:
                 rospy.loginfo("아래로 이동 → 시계 회전 후 직진")
                 # 시계 방향 90도 회전
                 self.twist.angular.z = -0.5
-                start_time = rospy.Time.now().to_sec()
-                while rospy.Time.now().to_sec() - start_time < 1.6:
+                start_time = time.time()
+                while time.time() - start_time < 1.6:
                     self.cmd_vel_pub.publish(self.twist)
+                    time.sleep(0.1)
 
                 self.stop_robot()
                 rospy.sleep(0.3)
@@ -166,9 +210,10 @@ class ServingRobotController:
                 continue
 
             # 실제 이동 (3초 동안 속도 명령 유지)
-            start_time = rospy.Time.now().to_sec()
-            while rospy.Time.now().to_sec() - start_time < move_time:
+            start_time = time.time()
+            while time.time() - start_time < move_time:
                 self.cmd_vel_pub.publish(self.twist)
+                time.sleep(0.1)
 
             # 한 칸 이동 후 정지
             self.stop_robot()
@@ -195,6 +240,25 @@ class ServingRobotController:
 
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+    import time
+
+    print("\n[테스트 시작] A* 경로 주행 시뮬레이션\n")
+
     controller = ServingRobotController()
-    controller.run()
+
+    # ① 테스트용 현재 좌표와 타겟 좌표 설정 (실제 좌표 단위: m)
+    controller.current_position = (0.0, 0.0)
+    controller.target_position = (0.12, 0.09)  # 약 12cm x 9cm 떨어진 목표
+
+   # ② ROS 퍼블리셔 대신 print로 출력하도록 임시 함수 추가
+    def fake_publish_twist(twist):
+        print(f"[CMD] linear.x={twist.linear.x:.3f}, angular.z={twist.angular.z:.3f}")
+
+    controller.cmd_vel_pub.publish = fake_publish_twist
+
+    # ③ A* 이동 테스트 실행
+    controller.state = "APPROACH"
+    controller.approach_target()
+
+    print("\n[테스트 종료] --- 로봇이 목표 지점까지 이동 완료 ---\n")
