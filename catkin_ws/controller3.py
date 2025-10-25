@@ -132,12 +132,35 @@ class ServingRobotController:
             elif dx == -1 and dy == 0:
                 rospy.loginfo("왼쪽 이동")
                 self.twist.linear.x = -speed
+
             elif dx == 0 and dy == 1:
-                rospy.loginfo("위로 이동")
-                self.twist.linear.y = speed
+                rospy.loginfo("위로 이동 → 반시계 회전 후 직진")
+                # 반시계 방향 90도 회전
+                self.twist.angular.z = 0.5
+                start_time = rospy.Time.now().to_sec()
+                while rospy.Time.now().to_sec() - start_time < 1.6:
+                    self.cmd_vel_pub.publish(self.twist)
+                
+                self.stop_robot()
+                rospy.sleep(0.3)
+                # 회전 후 직진 (x축 기준)
+                self.twist.angular.z = 0.0
+                self.twist.linear.x = speed
+
             elif dx == 0 and dy == -1:
-                rospy.loginfo("아래로 이동")
-                self.twist.linear.y = -speed
+                rospy.loginfo("아래로 이동 → 시계 회전 후 직진")
+                # 시계 방향 90도 회전
+                self.twist.angular.z = -0.5
+                start_time = rospy.Time.now().to_sec()
+                while rospy.Time.now().to_sec() - start_time < 1.6:
+                    self.cmd_vel_pub.publish(self.twist)
+
+                self.stop_robot()
+                rospy.sleep(0.3)
+                # 회전 후 직진 (x축 기준)
+                self.twist.angular.z = 0.0
+                self.twist.linear.x = speed
+
             else:
                 rospy.logwarn(f" 비정상적 이동 방향: dx={dx}, dy={dy}")
                 continue
