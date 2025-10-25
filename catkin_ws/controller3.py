@@ -134,7 +134,7 @@ class ServingRobotController:
                 self.twist.linear.x = -speed
 
             elif dx == 0 and dy == 1:
-                rospy.loginfo("위로 이동 → 반시계 회전 후 직진")
+                rospy.loginfo("위로 이동, 반시계 회전 후 직진")
                 # 반시계 방향 90도 회전
                 self.twist.angular.z = 0.5
                 start_time = rospy.Time.now().to_sec()
@@ -148,7 +148,7 @@ class ServingRobotController:
                 self.twist.linear.x = speed
 
             elif dx == 0 and dy == -1:
-                rospy.loginfo("아래로 이동 → 시계 회전 후 직진")
+                rospy.loginfo("아래로 이동, 시계 회전 후 직진")
                 # 시계 방향 90도 회전
                 self.twist.angular.z = -0.5
                 start_time = rospy.Time.now().to_sec()
@@ -176,7 +176,7 @@ class ServingRobotController:
         # --- 여기까지 새로 추가된 핵심 이동 로직 ---
 
         # 도착 후 정지
-        rospy.loginfo("✅ 목표 도착! 서빙 완료 → 탐색 모드 복귀")
+        rospy.loginfo("도착-> 탐색 모드 복귀")
         self.stop_robot()
         rospy.sleep(1.0)
         self.state = "SEARCH"
