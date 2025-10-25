@@ -95,16 +95,16 @@ class ServingRobotController:
         """A* 경로를 따라 상하좌우로 이동"""
         rospy.loginfo(f"타겟 접근 시작! 현재 위치: {self.current_position}, 타겟 위치: {self.target_position}")
 
-        # 1️⃣ 현재 좌표 → 격자 좌표 변환
+        # 1현재 좌표 → 격자 좌표 변환
         start = discretize(self.current_position)
         goal = discretize(self.target_position)
         rospy.loginfo(f"그리드 현재 위치: {start}, 그리드 타겟 위치: {goal}")
 
-        # 2️⃣ 격자 및 장애물 생성
+        # 2️격자 및 장애물 생성
         obstacles = [(1,1), (1,2), (2,1), (2,2)]
         grid = create_grid(obstacles, grid_size=(200,100))
 
-        # 3️⃣ A* 실행
+        # 3️A* 실행
         path = astar(grid, start, goal)
         if not path:
             rospy.logwarn("경로를 찾지 못했습니다. 탐색으로 복귀합니다.")
@@ -164,6 +164,7 @@ class ServingRobotController:
         rospy.sleep(1.0)
         self.state = "SEARCH"
         self.target_found = False
+
 
 
 
