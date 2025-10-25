@@ -36,35 +36,29 @@ class ServingRobotController:
         rospy.loginfo("서빙 로봇 컨트롤러 시작 - YOLO+RealSense 모드")
 
     def target_callback(self, msg):
-        """YOLO + RealSense 결과 처리"""
-        if msg.detections:
-            closest_target = None
-            min_depth = float('inf')
+        """YOLO + RealSense 기반 타겟 인식 콜백 (ID만 판별)"""
+        if not msg.detections:
+            return
 
-            rospy.loginfo(f"콜백 감지, 감지 수: {len(msg.detections)}")
+        rospy.loginfo(f"타겟 감지 신호 수신: {len(msg.detections)}개")
 
-            for detection in msg.detections:
-                if detection.results and detection.results[0].score >= 0.4:
-                    result = detection.results[0]
-                    print("물체 감지!\t ID : ", result.id)
+        for detection in msg.detections:
+            if not detection.results:
+                continue
 
-                    depth = result.pose.pose.position.z
+            result = detection.results[0]
+            target_id = result.id
 
-                    if result.id == self.target_id:
-                        self.target_found = True
-                        self.current_target_depth = depth
+            rospy.loginfo(f"물체 감지 - ID: {target_id}")
 
-                    if depth < min_depth:
-                        min_depth = depth
+            # 타겟 ID가 목표와 일치하면 이동 시작
+            if target_id == self.target_id:
+                self.target_found = True
+                rospy.loginfo("타겟 인식 성공! A* 주행 모드로 전환")
+                self.state = "APPROACH"
+                return
 
 
-            # 일정 거리 이내면 장애물로 간주
-            if min_depth < 0.4:  # 40cm 이내
-                self.obstacle_detected = True
-            else:
-                self.obstacle_detected = False
-
-            rospy.loginfo(f"타겟 발견! 거리: {min_depth:.2f}m | 장애물 여부: {self.obstacle_detected}")
 
 
 
@@ -133,19 +127,19 @@ class ServingRobotController:
 
             # 상하좌우 판단
             if dx == 1 and dy == 0:
-                rospy.loginfo("➡️ 오른쪽 이동")
+                rospy.loginfo("오른쪽 이동")
                 self.twist.linear.x = speed
             elif dx == -1 and dy == 0:
-                rospy.loginfo("⬅️ 왼쪽 이동")
+                rospy.loginfo("왼쪽 이동")
                 self.twist.linear.x = -speed
             elif dx == 0 and dy == 1:
-                rospy.loginfo("⬆️ 위로 이동")
+                rospy.loginfo("위로 이동")
                 self.twist.linear.y = speed
             elif dx == 0 and dy == -1:
-                rospy.loginfo("⬇️ 아래로 이동")
+                rospy.loginfo("아래로 이동")
                 self.twist.linear.y = -speed
             else:
-                rospy.logwarn(f"⚠️ 비정상적 이동 방향: dx={dx}, dy={dy}")
+                rospy.logwarn(f" 비정상적 이동 방향: dx={dx}, dy={dy}")
                 continue
 
             # 실제 이동 (3초 동안 속도 명령 유지)
