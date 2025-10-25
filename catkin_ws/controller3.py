@@ -19,7 +19,7 @@ class ServingRobotController:
         self.target_point_sub = rospy.Subscriber('/target_point', Point, self.target_point_callback)
 
         # 상태 변수들
-        self.state = "APPROACH"
+        self.state = "SEARCH"
         self.target_id = 1
         self.target_found = False
         self.serving_complete = False
@@ -43,7 +43,7 @@ class ServingRobotController:
         rospy.loginfo(f"타겟 감지 신호 수신: {len(msg.detections)}개")
 
         for detection in msg.detections:
-            if not detection.results:
+            if not detection.results:           # 실제 카메라 환경에서 빈 result 있을 수 있어서 만든 안전장치
                 continue
 
             result = detection.results[0]
