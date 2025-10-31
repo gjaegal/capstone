@@ -5,7 +5,6 @@ from geometry_msgs.msg import Twist
 from vision_msgs.msg import Detection2DArray
 from geometry_msgs.msg import Point
 from astar import astar, create_grid, discretize
-import math
 
 class ServingRobotController:
     def __init__(self):
@@ -14,19 +13,20 @@ class ServingRobotController:
         # 로봇 제어 퍼블리셔
         self.cmd_vel_pub = rospy.Publisher('/mobile_base/commands/velocity', Twist, queue_size=1) # ('cmd_vel')를 이걸로 바꿈
         # YOLO+RealSense 감지 결과 구독
-        self.target_sub = rospy.Subscriber('/target', Detection2DArray, self.target_callback)
+        # self.target_sub = rospy.Subscriber('/target', Detection2DArray, self.target_callback)
         self.current_point_sub = rospy.Subscriber('/current_point', Point, self.current_point_callback)
         self.target_point_sub = rospy.Subscriber('/target_point', Point, self.target_point_callback)
 
         # 상태 변수들
         self.state = "SEARCH"
-        self.target_id = 1
+        self.target_id = 0
+
         self.target_found = False
         self.serving_complete = False
         self.current_target_depth = float('inf')  # 현재 타겟까지 거리
         self.obstacle_detected = False            # RealSense 기반 장애물 감지 여부
         self.current_position = (0.0, 0.0)        # 현재 로봇 위치 (x, y)
-        self.target_position = (2.0, 2.0)         # 목표 위치 (x, y)
+        self.target_position = (0.5, 0.5)         # 목표 위치 (x, y)
         self.prev_grid_sg = None # discretized grid에서의 (현재 xy, goal xy)
 
         self.twist = Twist()
@@ -35,59 +35,60 @@ class ServingRobotController:
 
         rospy.loginfo("서빙 로봇 컨트롤러 시작 - YOLO+RealSense 모드")
 
-    def target_callback(self, msg):
-        """YOLO + RealSense 기반 타겟 인식 콜백 (ID만 판별)"""
-        if not msg.detections:
-            return
-
-        rospy.loginfo(f"타겟 감지 신호 수신: {len(msg.detections)}개")
-
-        for detection in msg.detections:
-            if not detection.results:           # 실제 카메라 환경에서 빈 result 있을 수 있어서 만든 안전장치
-                continue
-
-            result = detection.results[0]
-            target_id = result.id
-
-            rospy.loginfo(f"물체 감지 - ID: {target_id}")
-
-            # 타겟 ID가 목표와 일치하면 이동 시작
-            if target_id == self.target_id:
-                self.target_found = True
-                rospy.loginfo("타겟 인식 성공! A* 주행 모드로 전환")
-                return
-
-
-
-
 
     def target_point_callback(self, msg):
         rospy.loginfo(f"타겟 좌표: x={msg.x}, y={msg.y}, z={msg.z}")
         self.target_position = (msg.x, msg.y)
+        self.target_found = True
 
     def current_point_callback(self, msg):
-        rospy.loginfo(f"현재 좌표: x={msg.x}, y={msg.y}, z={msg.z}")
-        self.current_position = (msg.x, msg.y)
+        if self.current_position != (msg.x, msg.y):
+            rospy.loginfo(f"현재 좌표: x={msg.x}, y={msg.y}, z={msg.z}")
+            self.current_position = (msg.x, msg.y)
 
 
     def search_mode(self):
-        """탐색 모드"""
-        # rospy.loginfo("탐색 중... ")
+        """탐색 모드 - 전후진 반복"""
+        # 즉시 상태 변경 확인
         if self.target_found:
-            rospy.loginfo("[STATE] SEARCH -> APPROACH")
+            rospy.loginfo('[STATE] SEARCH -> APPROACH')
             self.state = "APPROACH"
             return
         
-        if self.obstacle_detected:
-            self.avoid_obstacle()
+        #if self.obstacle_detected:
+        #    self.avoid_obstacle()
+        #    return
+        
+        # 전후진 패턴
+        if not hasattr(self, 'search_start_time'):
+            self.search_start_time = rospy.Time.now()
+            self.search_forward = True
+        
+        elapsed = (rospy.Time.now() - self.search_start_time).to_sec()
+        
+        # 3초마다 앞뒤 변경
+        if elapsed > 3.0:
+            self.search_forward = not self.search_forward
+            self.search_start_time = rospy.Time.now()
+        
+        # 전진 또는 후진
+        if self.search_forward:
+            self.twist.linear.x = 0.1  # 전진
         else:
-            self.twist.linear.x = 0.00
-            self.cmd_vel_pub.publish(self.twist)
+            self.twist.linear.x = -0.1  # 후진
+        
+        self.cmd_vel_pub.publish(self.twist)
 
 
     def approach_target(self):
         """A* 경로를 따라 상하좌우로 이동"""
         rospy.loginfo(f"타겟 접근 시작! 현재 위치: {self.current_position}, 타겟 위치: {self.target_position}")
+
+        if self.target_position[0] < 0 or self.target_position[1] < 0:
+            rospy.logwarn(f"잘못된 목표 좌표입니다: {self.target}")
+            self.state = "SEARCH"
+            self.target_found = False
+            return
 
         # 1현재 좌표 → 격자 좌표 변환
         start = discretize(self.current_position)
@@ -95,14 +96,15 @@ class ServingRobotController:
         rospy.loginfo(f"그리드 현재 위치: {start}, 그리드 타겟 위치: {goal}")
 
         # 2️격자 및 장애물 생성
-        obstacles = [(0, 1), (2, 0), (2,1), (2,2), (1,3)]
-        grid = create_grid(obstacles, grid_size=(12,6))
+        obstacles = [(0, 1), (2, 0), (1,3)]
+        grid = create_grid(obstacles, grid_size=(24,12)) # 6m/3m grid 크기는 12m, 6m
 
         # 3️A* 실행
         path = astar(grid, start, goal)
         if not path:
             rospy.logwarn("경로를 찾지 못했습니다. 탐색으로 복귀합니다.")
             self.state = "SEARCH"
+            self.target_found = False
             return
 
         rospy.loginfo(f"A* 경로 길이: {len(path)}")
@@ -142,7 +144,7 @@ class ServingRobotController:
                 # 반시계 방향 90도 회전
                 self.twist.angular.z = rotate_speed
                 start_time = rospy.Time.now().to_sec()
-                while rospy.Time.now().to_sec() - start_time < 6.5 :
+                while rospy.Time.now().to_sec() - start_time < 5.2:
                     self.cmd_vel_pub.publish(self.twist)
                 
                 self.stop_robot()
@@ -156,12 +158,12 @@ class ServingRobotController:
                 # 시계 방향 90도 회전
                 self.twist.angular.z = -rotate_speed
                 start_time = rospy.Time.now().to_sec()
-                while rospy.Time.now().to_sec() - start_time < 6.5:
+                while rospy.Time.now().to_sec() - start_time < 5.2: # TODO: 5.2초에서 90도 조금 넘게 회전
                     self.cmd_vel_pub.publish(self.twist)
 
                 self.stop_robot()
                 rospy.sleep(0.3)
-                # 회전 후 직진 (x축 기준)
+                # 회전 후 직진 (x축 기준) 
                 self.twist.angular.z = 0.0
                 self.twist.linear.x = speed
 
@@ -172,9 +174,9 @@ class ServingRobotController:
             # 바라보는 방향 업데이트
             dir = (dx, dy)
             
-            # 직진 이동 (3초 동안 속도 명령 유지)
+            # 직진 이동 (5초 동안 속도 명령 유지) TODO: 대략 38cm 이동, 12cm 오차
             start_time = rospy.Time.now().to_sec()
-            while rospy.Time.now().to_sec() - start_time < move_time:
+            while rospy.Time.now().to_sec() - start_time < move_time+1:
                 self.cmd_vel_pub.publish(self.twist)
 
             # 한 칸 이동 후 정지
