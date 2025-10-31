@@ -110,9 +110,9 @@ class ServingRobotController:
             rospy.loginfo(f"  {p}")
 
         # ---여기부터 새로 추가된 핵심 이동 로직 ---
-        speed = 0.01        # 0.01 m/s (1cm/s)
-        cell_size = 0.5    # 한 칸 = 0.03 m (3cm)
-        move_time = cell_size / speed  # 3초
+        speed = 0.1        # 0.1 m/s (10cm/s)
+        cell_size = 0.5    # 한 칸 = 0.5 m (50cm)
+        move_time = cell_size / speed  # 5초
 
         for i in range(1, len(path)):
             current = path[i-1]
@@ -138,7 +138,7 @@ class ServingRobotController:
                 # 반시계 방향 90도 회전
                 self.twist.angular.z = 0.5
                 start_time = rospy.Time.now().to_sec()
-                while rospy.Time.now().to_sec() - start_time < 1.6:
+                while rospy.Time.now().to_sec() - start_time < 3.14:
                     self.cmd_vel_pub.publish(self.twist)
                 
                 self.stop_robot()
@@ -152,7 +152,7 @@ class ServingRobotController:
                 # 시계 방향 90도 회전
                 self.twist.angular.z = -0.5
                 start_time = rospy.Time.now().to_sec()
-                while rospy.Time.now().to_sec() - start_time < 1.6:
+                while rospy.Time.now().to_sec() - start_time < 3.14:
                     self.cmd_vel_pub.publish(self.twist)
 
                 self.stop_robot()
