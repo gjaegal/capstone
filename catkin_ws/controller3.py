@@ -96,7 +96,7 @@ class ServingRobotController:
 
         # 2️격자 및 장애물 생성
         obstacles = [(1,1), (1,2), (2,1), (2,2)]
-        grid = create_grid(obstacles, grid_size=(200,100))
+        grid = create_grid(obstacles, grid_size=(12,6))
 
         # 3️A* 실행
         path = astar(grid, start, goal)
@@ -111,7 +111,7 @@ class ServingRobotController:
 
         # ---여기부터 새로 추가된 핵심 이동 로직 ---
         speed = 0.01        # 0.01 m/s (1cm/s)
-        cell_size = 0.03    # 한 칸 = 0.03 m (3cm)
+        cell_size = 0.5    # 한 칸 = 0.03 m (3cm)
         move_time = cell_size / speed  # 3초
 
         for i in range(1, len(path)):
