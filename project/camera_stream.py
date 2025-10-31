@@ -14,10 +14,10 @@ class RealSenseLocalizationStreamer:
     - 실시간 스트리밍, 객체 감지/추적, 자세 추정, 카메라 위치 추정 기능 통합
     """
 
-    TARGET_CLASSES = {'dining table', 'cookie'}, 'cell phone' # 탐지 목표 클래스
+    TARGET_CLASSES = ['chair', 'mouse', 'remote'] # 탐지 목표 클래스
     MIN_CONF_DET = 0.40
     MIN_CONF_POSE = 0.40
-    MAX_DEPTH_M = 5.0
+    MAX_DEPTH_M = 15.0
     DEPTH_ALPHA = 0.08
 
     COCO_SKELETON_BODY = [
