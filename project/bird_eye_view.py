@@ -55,40 +55,69 @@ def draw_static_map_elements(canvas):
     H, W = canvas.shape[:2]
     cx, cy = MAP_PARAMS['origin_px']
 
-    # ----- Grid: ID0을 원점으로 한 축 눈금 (1m 간격) -----
-    X_MAX = 6  # x축 0~6m
-    Y_MAX = 3  # y축 0~3m
+    # ----- 범위/간격 설정 -----
+    xmin, xmax = 0.0, 6.0   # m
+    ymin, ymax = 0.0, 3.0   # m
+    step_minor = 0.5        # m (요청: 0.5m grid)
+    step_major = 1.0        # m (라벨/진한선용)
 
-    # 원점(=ID0) 픽셀 좌표
+    # ----- ID0 원점 좌표 -----
     id0_px, id0_py = world_to_map_coords((_origin_id0[0], _origin_id0[1]))
 
-    # 축 라인
-    cv2.line(canvas, (0, id0_py), (W, id0_py), (0, 0, 0), 1)   # x축
-    cv2.line(canvas, (id0_px, 0), (id0_px, H), (0, 0, 0), 1)   # y축
+    # ----- 0.5m 그리드 -----
+    # 수직선: x = k,  k ∈ [xmin, xmax], 간격 0.5m
+    k = xmin
+    while k <= xmax + 1e-9:
+        x1, y1 = world_to_map_coords((k, ymin))
+        x2, y2 = world_to_map_coords((k, ymax))
+        # major(정수)와 minor(0.5 단위) 선 두께/색 구분
+        is_major = abs(round(k) - k) < 1e-9
+        color = (180, 180, 180) if not is_major else (130, 130, 130)
+        thick = 1 if not is_major else 1  # 필요하면 major=2로 더 두껍게
+        cv2.line(canvas, (x1, y1), (x2, y2), color, thick)
+        k += step_minor
 
-    # x축 눈금: 0~X_MAX m (ID0 기준, 좌우반전이므로 값이 커질수록 왼쪽으로 감)
-    for i in range(0, X_MAX+1):
-        tx, ty = world_to_map_coords((_origin_id0[0] + i, _origin_id0[1]))
-        cv2.line(canvas, (tx, id0_py - 5), (tx, id0_py + 5), (0, 0, 0), 1)
-        cv2.putText(canvas, f"{i}m", (tx - 12, id0_py + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1)
+    # 수평선: y = k,  k ∈ [ymin, ymax], 간격 0.5m
+    k = ymin
+    while k <= ymax + 1e-9:
+        x1, y1 = world_to_map_coords((xmin, k))
+        x2, y2 = world_to_map_coords((xmax, k))
+        is_major = abs(round(k) - k) < 1e-9
+        color = (180, 180, 180) if not is_major else (130, 130, 130)
+        thick = 1 if not is_major else 1
+        cv2.line(canvas, (x1, y1), (x2, y2), color, thick)
+        k += step_minor
 
-    # y축 눈금: 0~Y_MAX m (ID0 기준, 위로 증가)
-    for j in range(0, Y_MAX+1):
-        tx, ty = world_to_map_coords((_origin_id0[0], _origin_id0[1] + j))
-        cv2.line(canvas, (id0_px - 5, ty), (id0_px + 5, ty), (0, 0, 0), 1)
-        cv2.putText(canvas, f"{j}m", (id0_px + 10, ty + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1)
+    # ----- 1m 눈금(라벨) : 범위 내에서만 표시 -----
+    # x축 라벨 (y=ymin 에 배치)
+    i = int(xmin)
+    while i <= int(xmax):
+        tx, ty = world_to_map_coords((float(i), ymin))
+        cv2.putText(canvas, f"{i}m", (tx - 12, ty + 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1)
+        i += 1
 
-    # 원점(ID0) 표시
+    # y축 라벨 (x=xmin 에 배치)
+    j = int(ymin)
+    while j <= int(ymax):
+        tx, ty = world_to_map_coords((xmin, float(j)))
+        cv2.putText(canvas, f"{j}m", (tx + 10, ty + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1)
+        j += 1
+
+    # ----- 원점(ID0) 마커 -----
     cv2.circle(canvas, (id0_px, id0_py), 6, (0, 0, 255), -1)
-    cv2.putText(canvas, "ID0 (0,0)", (id0_px + 10, id0_py - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
+    cv2.putText(canvas, "ID0 (0,0)", (id0_px + 10, id0_py - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
 
-    # ----- 마커들 (좌우반전된 배치로 보임 / 텍스트는 정상) -----
     marker_half_px = int(MARKER_LENGTH_M * MAP_PARAMS['scale'] / 2)
     for mid, w in MARKER_WORLD_COORDS.items():
         mx, my = world_to_map_coords((w[0], w[1]))
         cv2.rectangle(canvas, (mx - marker_half_px, my - marker_half_px),
-                      (mx + marker_half_px, my + marker_half_px), (50, 50, 50), -1)
-        cv2.putText(canvas, str(mid), (mx + 6, my - 6), cv2.FONT_HERSHEY_SIMPLEX, 1, (200, 50, 50), 3)
+                      (mx + marker_half_px, my + marker_half_px),
+                      (50, 50, 50), -1)
+        cv2.putText(canvas, str(mid), (mx + 6, my - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (200, 50, 50), 3)
 
 def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
