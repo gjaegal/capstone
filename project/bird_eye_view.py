@@ -182,7 +182,7 @@ def main():
             cv2.circle(bev, (px, py), 8, (255, 0, 0), -1)
             cv2.putText(bev, f"{cls_name} ({tx:.1f}, {ty:.1f})", (px + 10, py - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 0), 2)
 
-################################ 장애물 표시 ###############################
+################################ 장애물 표시 ################################
         try:
             o, _ = obstacle_sock.recvfrom(1024)
             ox, oy, oz = [float(p) for p in o.decode('utf-8').split(',')]
