@@ -15,9 +15,10 @@ class RealSenseLocalizationStreamer:
     """
 
     TARGET_CLASSES = ['chair', 'mouse', 'remote'] # 탐지 목표 클래스
+    IGNORE_CLASSES = ['refrigerator', 'tv','laptop', 'kite', 'frisbee', 'airplane', 'bird', 'sports ball'] # 탐지해도 무시할 클래스
     MIN_CONF_DET = 0.40
     MIN_CONF_POSE = 0.40
-    MAX_DEPTH_M = 15.0
+    MAX_DEPTH_M = 10.0
     DEPTH_ALPHA = 0.08
 
     COCO_SKELETON_BODY = [
@@ -59,7 +60,7 @@ class RealSenseLocalizationStreamer:
         self.marker_length_m = 0.20
         self.marker_ids = set(range(12))
 
-        # ✅ 실제 맵 (BEV_guide 기반, m 단위, 원점 = ID0)
+        # 실제 맵 (BEV_guide 기반, m 단위, 원점 = ID0)
         self.marker_world_pos = {
             0:  np.array([0.0, 0.0, 0.0], dtype=np.float32),
             1:  np.array([1.5, 0.0, 0.0], dtype=np.float32),
@@ -80,6 +81,10 @@ class RealSenseLocalizationStreamer:
         self.axis_scale = 0.15
         self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
         self.aruco_params = cv2.aruco.DetectorParameters()
+        self.aruco_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_NONE
+        self.aruco_params.adaptiveThreshWinSizeMin = 5
+        self.aruco_params.adaptiveThreshWinSizeMax = 7
+        self.aruco_params.adaptiveThreshWinSizeStep = 2
         self.aruco_detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
         
         color_stream = self.profile.get_stream(rs.stream.color).as_video_stream_profile()
@@ -183,7 +188,6 @@ class RealSenseLocalizationStreamer:
     def run(self):
         try:
             while True:
-                current_time = time.time()
                 depth_image, color_image = self._read_frames()
                 if depth_image is None: continue
 
@@ -201,17 +205,19 @@ class RealSenseLocalizationStreamer:
                         cls_name = self.det_model.names.get(cls_id, str(cls_id))
                         conf = float(box.conf[0])
 
+                        # 무시 클래스 필터링
+                        if cls_name in self.IGNORE_CLASSES:
+                            continue  # 아래 전체(UDP, publish, draw, tracking) 모두 스킵
+
+                        # --- 타겟 객체 검출 및 UDP publish ---
                         if cls_name in self.TARGET_CLASSES and conf >= self.MIN_CONF_DET:
                             cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
                             d_m = self._depth_at(depth_image, cx, cy)
                             if d_m is not None and 0.0 <= d_m <= self.MAX_DEPTH_M:
                                 valid_dets.append((cls_name, d_m, (x1, y1, x2, y2), (cx, cy), conf))
-                            
-                                # --- 타겟 좌표 UDP 송신 ---
-                                # 카메라 pos (이미 위에서 구한 값) + depth를 이용해 타겟 좌표 근사
+                                
                                 # --- 타겟 좌표 UDP 송신 (실제 월드 좌표) ---
-                                if 'pos' in locals() and 'R' in locals() and 'tvec_g' in locals():
-                                    # 1) 픽셀 좌표 + 깊이 → 카메라 좌표계
+                                if hasattr(self, 'current_position') and self.current_position is not None:
                                     fx, fy = self.K[0, 0], self.K[1, 1]
                                     cx0, cy0 = self.K[0, 2], self.K[1, 2]
                                     Xc = (cx - cx0) * d_m / fx
@@ -219,97 +225,152 @@ class RealSenseLocalizationStreamer:
                                     Zc = d_m
                                     Pc = np.array([Xc, Yc, Zc])
 
-                                    # 2) 카메라 → 월드 좌표 변환
                                     Pw = R.T @ (Pc - tvec_g.flatten())
 
-                                    # 3) UDP 송신
-                                    coord_str = f"{Pw[0]},{Pw[1]},{Pw[2]}"
+                                    coord_str = f"{cls_name},{Pw[0]},{Pw[1]},{Pw[2]}"
                                     self.target_sock.sendto(coord_str.encode('utf-8'),
                                                             self.target_server_address)
                                     det_positions.append(Pw)
 
                                     print(f"[Target World Coord] {Pw}")
-                                    
-                                    # 타겟 좌표 publish
                                     self.publish_point(Pw, "target")
 
-
-
-
+                        # --- Tracking 및 시각화 (무시 클래스는 이미 continue로 스킵됨) ---
                         if conf >= self.MIN_CONF_DET:
                             tracker_bboxes.append(([x1, y1, w, h], conf, cls_id))
-                            if cls_name.lower() != 'person':
-                                cv2.rectangle(color_image, (x1, y1), (x2, y2), (255, 0, 255), 2)
                             
+                            # if cls_name.lower() != 'person':
+                            cv2.rectangle(color_image, (x1, y1), (x2, y2), (255, 0, 255), 2)
+
                             cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
                             d_vis = self._depth_at(depth_image, cx, cy)
-                            
+
                             label = f'{cls_name} {conf:.2f}'
                             if d_vis and d_vis < self.MAX_DEPTH_M:
                                 label += f' | {d_vis:.2f}m'
-                            
-                            cv2.putText(color_image, label, (x1, max(0, y1 - 6)), 
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
 
+                            cv2.putText(color_image, label, (x1, max(0, y1 - 6)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
+                            
+                            # Human pose estimation
+                            # if cls_name.lower() == "person" and conf > self.MIN_CONF_DET:
+                            #     crop_img = color_image[y1:y2, x1:x2]
+                            #     pose_results = self.pose_model(crop_img, verbose=False)
+                            #     for pose in pose_results:
+                            #         if not hasattr(pose, "keypoints") or pose.keypoints is None:
+                            #             continue
+                            #         keypoints = pose.keypoints.data.cpu().numpy()
+                            #         for person_kpt in keypoints:
+                            #             abs_kpts = []
+                            #             for (x, y, c) in person_kpt:
+                            #                 if np.isnan(x) or np.isnan(y) or c < self.MIN_CONF_POSE:
+                            #                     abs_kpts.append((None, None))
+                            #                 else:
+                            #                     abs_kpts.append((int(x1 + x), int(y1 + y)))
+                            #             self._draw_pose_with_headrule(color_image, abs_kpts)
+
+                # --- 객체 추적 ID 표시 ---
                 tracks = self.tracker.update_tracks(tracker_bboxes, frame=color_image)
                 for t in tracks:
-                    if not t.is_confirmed(): continue
+                    if not t.is_confirmed():
+                        continue
                     l, _, r, b = t.to_ltrb()
-                    cv2.putText(color_image, f'ID:{str(t.track_id)}', (int(l), max(0, int(b) - 8)), 
+                    cv2.putText(color_image, f'ID:{str(t.track_id)}',
+                                (int(l), max(0, int(b) - 8)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
                 
-                if self.on_detections is not None and valid_dets:
-                    self.on_detections(valid_dets)
+                # if self.on_detections is not None and valid_dets:
+                #     self.on_detections(valid_dets)
 
                 # --- ArUco 마커 기반 Localization ---
                 corners, ids, _ = self.aruco_detector.detectMarkers(color_image)
-                if ids is not None:
-                    cv2.aruco.drawDetectedMarkers(color_image, corners, ids)
+                if ids is not None and len(ids) > 0:
+                    # 각 마커 pose 추정
                     rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
                         corners, self.marker_length_m, self.K, self.dist)
-                    
-                    for i in range(len(ids)):
-                        self._draw_axes_custom(color_image, rvecs[i], tvecs[i],
-                                               self.K, self.dist, self.axis_scale * 0.6)
-                        cx, cy = np.mean(corners[i].reshape(4, 2), axis=0, dtype=int)
-                        self._put_marker_info_text(color_image, ids[i][0], tvecs[i], (cx, cy))
 
-                    obj_points, img_points = [], []
-                    for i, mid in enumerate(ids.flatten()):
-                        if mid in self.marker_ids:
-                            half_len = self.marker_length_m / 2.0
-                            world_center = self.marker_world_pos[mid]  # ✅ 실제 맵 좌표 사용
-                            obj_pts_marker = np.float32([
-                                [-half_len,  half_len, 0],
-                                [ half_len,  half_len, 0],
-                                [ half_len, -half_len, 0],
-                                [-half_len, -half_len, 0]
-                            ])
-                            obj_points.extend(world_center + obj_pts_marker)
-                            img_points.extend(corners[i].reshape(4, 2))
-                    
-                    if len(obj_points) >= 4:
-                        ok, rvec_g, tvec_g = cv2.solvePnP(
-                            np.array(obj_points), np.array(img_points), self.K, self.dist)
+                    # 각 마커의 3D 거리(norm) 계산
+                    distances = np.linalg.norm(tvecs.reshape(-1, 3), axis=1)
+                    valid_mask = distances <= 4.0 # 4m 밖의 마커는 인식하지 않도록 함 (localization 안정성)
+                    if not np.any(valid_mask):
+                        continue
+                    tvecs = tvecs[valid_mask]
+                    rvecs = rvecs[valid_mask]
+                    corners = [corners[i] for i, v in enumerate(valid_mask) if v]
+                    ids = ids[valid_mask]
+                    distances = distances[valid_mask]
+
+                    min_idx = np.argmin(distances)
+                    # 가장 가까운 마커 선택
+                    closest_id = int(ids[min_idx][0])
+                    closest_rvec = rvecs[min_idx]
+                    closest_tvec = tvecs[min_idx]
+                    closest_corners = corners[min_idx]
+
+                    # 선택된 마커만 강조 표시 (녹색)
+                    cv2.aruco.drawDetectedMarkers(color_image, [closest_corners],
+                                                np.array([[closest_id]]), (0, 255, 0))
+
+                    # 좌표축과 텍스트 표시
+                    self._draw_axes_custom(color_image, closest_rvec, closest_tvec,
+                                        self.K, self.dist, self.axis_scale * 0.6)
+                    cx, cy = np.mean(closest_corners.reshape(4, 2), axis=0, dtype=int)
+                    self._put_marker_info_text(color_image, closest_id, closest_tvec, (cx, cy))
+
+                    cv2.setRNGSeed(42)
+
+                    # solvePnPRansac을 위한 3D-2D 대응점 생성
+                    if closest_id in self.marker_ids:
+                        half_len = self.marker_length_m / 2.0
+                        world_center = self.marker_world_pos[closest_id]  # 실제 맵 좌표
+                        obj_pts_marker = np.float32([
+                            [-half_len,  half_len, 0],
+                            [ half_len,  half_len, 0],
+                            [ half_len, -half_len, 0],
+                            [-half_len, -half_len, 0]
+                        ])
+                        obj_points = world_center + obj_pts_marker
+                        img_points = closest_corners.reshape(4, 2)
+
+                        # pose 계산 (RANSAC)
+                        ok, rvec_g, tvec_g, _ = cv2.solvePnPRansac(
+                            np.array(obj_points),
+                            np.array(img_points),
+                            self.K,
+                            self.dist,
+                            flags=cv2.SOLVEPNP_ITERATIVE,
+                            reprojectionError=3.0,
+                            confidence=0.99,
+                            iterationsCount=100
+                        )
+
                         if ok:
                             R, _ = cv2.Rodrigues(rvec_g)
                             pos = (-R.T @ tvec_g).flatten()
                             ang = np.degrees(self._rotation_matrix_to_euler_angles(R.T))
                             self._put_localization_text(color_image, pos, ang)
 
-                            coord_str = f"{pos[0]},{pos[1]},{pos[2]},{ang[0]},{ang[1]},{ang[2]}"
+                            # Temporal Filtering (지수 이동 평균)
+                            if not hasattr(self, 'filtered_pos') or self.filtered_pos is None:
+                                self.filtered_pos = pos
+                            else:
+                                alpha = 0.8  # 안정성 우선
+                                self.filtered_pos = alpha * self.filtered_pos + (1 - alpha) * pos
+                            stable_pos = self.filtered_pos
+
+                            # 좌표 publish
+                            coord_str = f"{stable_pos[0]},{stable_pos[1]},{stable_pos[2]},{ang[0]},{ang[1]},{ang[2]}"
                             self.sock.sendto(coord_str.encode('utf-8'), self.server_address)
 
-                            # 로봇 현재 위치 좌표 publish
-                            # if self.publish_point is not None:
-                            #     self.publish_point(pos, "current")
-                            self.current_position = pos
+                            if self.publish_point is not None:
+                                self.publish_point(stable_pos, "current")
 
-
-                            
+                            self.current_position = stable_pos
 
                 if self.show_windows:
                     cv2.imshow('RealSense Integrated Stream', color_image)
+                    cv2.moveWindow('RealSense Integrated Stream', 400, 400) # 좌측 중간에 팝업
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
         finally:
