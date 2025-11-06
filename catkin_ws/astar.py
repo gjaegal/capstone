@@ -96,7 +96,7 @@ def create_grid(obstacles=None, grid_size=(7, 7)):
                 grid[i][j] = 0  # 이동 가능
     return np.array(grid)
 
-def discretize(position, grid_x=0.025, grid_y=0.03):
+def discretize(position, grid_x=0.5, grid_y=0.5):
     """연속 좌표를 격자 좌표로 변환"""
     x, y = position
     return (int(x // grid_x), int(y // grid_y))
