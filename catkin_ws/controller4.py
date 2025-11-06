@@ -6,6 +6,7 @@ from geometry_msgs.msg import Twist, Point
 from nav_msgs.msg import Odometry
 import tf
 from astar import astar, create_grid, discretize
+import socket
 
 class ServingRobotController:
     def __init__(self):
@@ -15,6 +16,11 @@ class ServingRobotController:
         self.cmd_vel_pub = rospy.Publisher('/mobile_base/commands/velocity', Twist, queue_size=1)
         self.current_point_sub = rospy.Subscriber('/current_point', Point, self.current_point_callback)
         self.target_point_sub = rospy.Subscriber('/target_point', Point, self.target_point_callback)
+
+
+        # --- BEV 경로 전송용 UDP 소켓 ---
+        self.path_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.path_addr = ('localhost', 12348)   # bird_eye_view.py에서 수신할 포트
 
         # 상태 변수
         self.state = "SEARCH"
@@ -152,6 +158,16 @@ class ServingRobotController:
         grid = create_grid(obstacles, grid_size=(24, 12))
 
         path = astar(grid, start, goal)
+        
+        # --- BEV로 경로 전송 (A* 결과 시각화용) ---
+        try:
+            cell_size = 0.5  # m 단위 (grid 한 칸당 실제 거리)
+            coords_str = ';'.join([f"{x*cell_size},{y*cell_size}" for (x, y) in path])
+            self.path_sock.sendto(coords_str.encode('utf-8'), self.path_addr)
+            rospy.loginfo(f"[BEV] 경로 {len(path)}개 노드 전송 완료")
+        except Exception as e:
+            rospy.logwarn(f"[BEV] 경로 전송 실패: {e}")
+        
         if not path:
             rospy.logwarn("경로를 찾지 못했습니다. 탐색 모드로 복귀합니다.")
             self.state = "SEARCH"
