@@ -124,6 +124,13 @@ def main():
     obstacle_sock.bind(('localhost', 12347))
     obstacle_sock.settimeout(0.02)
 
+
+    # >>> 추가 부분 (A* 경로 수신용) <<<
+    path_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    path_sock.bind(('localhost', 12348))   # controller4.py에서 보낼 포트
+    path_sock.settimeout(0.02)
+    path_points = []
+
     base = np.full((MAP_PARAMS['size_px'], MAP_PARAMS['size_px'], 3),
                    (240, 240, 240), dtype=np.uint8)
     draw_static_map_elements(base)
@@ -197,15 +204,41 @@ def main():
         for (px, py) in obstacles[-200:]:
             cv2.circle(bev, (px, py), 4, (0, 0, 0), -1)
 
+
+################################ 경로 표시 ################################
+        try:
+            p, _ = path_sock.recvfrom(4096)
+            coords = p.decode('utf-8').split(';')   # "x1,y1;x2,y2;..." 형태
+            path_points = [tuple(map(float, c.split(','))) for c in coords if c]
+        except socket.timeout:
+            pass
+        except Exception as e:
+            print(f"Bad packet (path): {e}")
+
+        # A* 경로 시각화
+        if path_points:
+            pts = np.array([world_to_map_coords((x, y)) for (x, y) in path_points], np.int32)
+            if len(pts) > 1:
+                cv2.polylines(bev, [pts], False, (0, 255, 255), 2)  # 노란색 선으로 연결
+            else:
+                for (x, y) in pts:
+                    px, py = world_to_map_coords((x, y))
+                    cv2.circle(bev, (px, py), 4, (0, 255, 255), -1)
+
+
         cv2.imshow("Bird's-Eye View", bev)
         cv2.moveWindow("Bird's-Eye View", 1200, 200) # 팝업 창 위치 설정
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q') or cv2.getWindowProperty("Bird's-Eye View", cv2.WND_PROP_VISIBLE) < 1:
             break
 
+
+
+
     sock.close()
     target_sock.close()
     obstacle_sock.close()
+    path_sock.close() 
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
