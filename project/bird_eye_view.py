@@ -1,4 +1,5 @@
-# bird_eye_view.py
+#!/usr/bin/env python3
+# bird_eye_view.py (로봇/타겟/장애물 BEV 통합 표시)
 
 import cv2
 import numpy as np
@@ -11,12 +12,10 @@ MARKER_WORLD_COORDS = {
     1:  np.array([1.5, 0.0, 0.0]),
     2:  np.array([3.2, 0.0, 0.0]),
     3:  np.array([5.0, 0.0, 0.0]),
-
     4:  np.array([0.0, 1.5, 0.0]),
     5:  np.array([1.6, 1.5, 0.0]),
     6:  np.array([3.2, 1.5, 0.0]),
     7:  np.array([4.8, 1.5, 0.0]),
-
     8:  np.array([0.0, 3.0, 0.0]),
     9:  np.array([1.5, 3.0, 0.0]),
     10: np.array([3.1, 3.0, 0.0]),
@@ -26,180 +25,187 @@ MARKER_LENGTH_M = 0.20
 
 # --- 맵/렌더링 설정 ---
 MAP_PARAMS = {
-    'size_px': 900,     # 출력 창 크기
-    'scale': 100,       # 1m = 100px
+    'size_px': 900,
+    'scale': 100,  # 1m = 100px
 }
-MAP_PARAMS['origin_px'] = (MAP_PARAMS['size_px']//2, MAP_PARAMS['size_px']//2)  # 화면 정중앙
+MAP_PARAMS['origin_px'] = (MAP_PARAMS['size_px']//2, MAP_PARAMS['size_px']//2)
 
-# --- 시야 중심: ID5 & ID6의 중점 (화면 중앙이 여기를 보게 함) ---
-_center_56 = (MARKER_WORLD_COORDS[5][:2] + MARKER_WORLD_COORDS[6][:2]) / 2.0  # (2.4, 1.5)
+# --- 시야 중심: ID5 & ID6의 중점 (화면 중앙 기준) ---
+_center_56 = (MARKER_WORLD_COORDS[5][:2] + MARKER_WORLD_COORDS[6][:2]) / 2.0
+_origin_id0 = MARKER_WORLD_COORDS[0][:2]
 
-# --- grid 원점: ID0 (라벨/눈금 0m 기준) ---
-_origin_id0 = MARKER_WORLD_COORDS[0][:2]  # (0.0, 0.0)
-
-# --- 월드→스크린 변환 (화면 중심 = 중점(5,6), X좌우반전 포함) ---
+# --- 월드→맵 변환 ---
 def world_to_map_coords(world_xy):
     wx, wy = world_xy
-    # 화면 중심 기준으로 시프트 + X축 좌우 반전
     wx_shift = -(wx - _center_56[0])
     wy_shift =  (wy - _center_56[1])
-
     ox, oy = MAP_PARAMS['origin_px']
     s = MAP_PARAMS['scale']
     x = int(ox + wx_shift * s)
-    y = int(oy - wy_shift * s)  # y는 위로 증가
+    y = int(oy - wy_shift * s)
     return x, y
 
-# --- 축/눈금(axes-only), 마커들 ---
+# --- 기본 맵 축/눈금/마커 ---
 def draw_static_map_elements(canvas):
     H, W = canvas.shape[:2]
-    cx, cy = MAP_PARAMS['origin_px']
 
-    # ----- 범위/간격 설정 -----
-    xmin, xmax = 0.0, 6.0   # m
-    ymin, ymax = 0.0, 3.0   # m
-    step_minor = 0.5        # m (요청: 0.5m grid)
-    step_major = 1.0        # m (라벨/진한선용)
+    # ----- Grid 범위(월드 단위, m) -----
+    X_MAX = 6.0   # x축 0~6 m
+    Y_MAX = 3.0   # y축 0~3 m
+    STEP  = 0.5   # 0.5 m 간격
 
-    # ----- ID0 원점 좌표 -----
-    id0_px, id0_py = world_to_map_coords((_origin_id0[0], _origin_id0[1]))
+    # 원점(=ID0) 픽셀 좌표
+    id0_px, id0_py = world_to_map_coords((MARKER_WORLD_COORDS[0][0], MARKER_WORLD_COORDS[0][1]))
 
-    # ----- 0.5m 그리드 -----
-    # 수직선: x = k,  k ∈ [xmin, xmax], 간격 0.5m
-    k = xmin
-    while k <= xmax + 1e-9:
-        x1, y1 = world_to_map_coords((k, ymin))
-        x2, y2 = world_to_map_coords((k, ymax))
-        # major(정수)와 minor(0.5 단위) 선 두께/색 구분
-        is_major = abs(round(k) - k) < 1e-9
-        color = (180, 180, 180) if not is_major else (130, 130, 130)
-        thick = 1 if not is_major else 1  # 필요하면 major=2로 더 두껍게
-        cv2.line(canvas, (x1, y1), (x2, y2), color, thick)
-        k += step_minor
+    # ----- 0.5 m 그리드 (연한 회색), 1 m 라인(짙은 회색) -----
+    # 세로선: x = 0, 0.5, 1.0, ..., X_MAX
+    x_tick = 0.0
+    while x_tick <= X_MAX + 1e-9:
+        (x1, y1) = world_to_map_coords((x_tick, 0.0))
+        (x2, y2) = world_to_map_coords((x_tick, Y_MAX))
+        color = (210, 210, 210)
+        thickness = 1 if (abs(x_tick - round(x_tick)) > 1e-9) else 1
+        cv2.line(canvas, (x1, y1), (x2, y2), color, thickness)
+        x_tick += STEP
 
-    # 수평선: y = k,  k ∈ [ymin, ymax], 간격 0.5m
-    k = ymin
-    while k <= ymax + 1e-9:
-        x1, y1 = world_to_map_coords((xmin, k))
-        x2, y2 = world_to_map_coords((xmax, k))
-        is_major = abs(round(k) - k) < 1e-9
-        color = (180, 180, 180) if not is_major else (130, 130, 130)
-        thick = 1 if not is_major else 1
-        cv2.line(canvas, (x1, y1), (x2, y2), color, thick)
-        k += step_minor
+    # 가로선: y = 0, 0.5, 1.0, ..., Y_MAX
+    y_tick = 0.0
+    while y_tick <= Y_MAX + 1e-9:
+        (x1, y1) = world_to_map_coords((0.0,  y_tick))
+        (x2, y2) = world_to_map_coords((X_MAX, y_tick))
+        color = (150, 150, 150)
+        thickness = 1 if (abs(y_tick - round(y_tick)) > 1e-9) else 1
+        cv2.line(canvas, (x1, y1), (x2, y2), color, thickness)
+        y_tick += STEP
 
-    # ----- 1m 눈금(라벨) : 범위 내에서만 표시 -----
-    # x축 라벨 (y=ymin 에 배치)
-    i = int(xmin)
-    while i <= int(xmax):
-        tx, ty = world_to_map_coords((float(i), ymin))
-        cv2.putText(canvas, f"{i}m", (tx - 12, ty + 22),
+    # ----- 축/눈금(1 m 라벨만) -----
+    # x축(원점 y 위치) / y축(원점 x 위치)
+    cv2.line(canvas, (0, id0_py), (W, id0_py), (120, 120, 120), 1)
+    cv2.line(canvas, (id0_px, 0), (id0_px, H), (120, 120, 120), 1)
+
+    # 1 m 라벨
+    for i in range(0, int(X_MAX) + 1):
+        tx, ty = world_to_map_coords((float(i), 0.0))
+        cv2.putText(canvas, f"{i}m", (tx - 12, id0_py + 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1)
-        i += 1
 
-    # y축 라벨 (x=xmin 에 배치)
-    j = int(ymin)
-    while j <= int(ymax):
-        tx, ty = world_to_map_coords((xmin, float(j)))
-        cv2.putText(canvas, f"{j}m", (tx + 10, ty + 5),
+    for j in range(0, int(Y_MAX) + 1):
+        tx, ty = world_to_map_coords((0.0, float(j)))
+        cv2.putText(canvas, f"{j}m", (id0_px + 10, ty + 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1)
-        j += 1
 
     # ----- 원점(ID0) 마커 -----
     cv2.circle(canvas, (id0_px, id0_py), 6, (0, 0, 255), -1)
     cv2.putText(canvas, "ID0 (0,0)", (id0_px + 10, id0_py - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
 
+    # ----- 아루코 마커 사각형/라벨 -----
     marker_half_px = int(MARKER_LENGTH_M * MAP_PARAMS['scale'] / 2)
     for mid, w in MARKER_WORLD_COORDS.items():
         mx, my = world_to_map_coords((w[0], w[1]))
         cv2.rectangle(canvas, (mx - marker_half_px, my - marker_half_px),
-                      (mx + marker_half_px, my + marker_half_px),
-                      (50, 50, 50), -1)
+                      (mx + marker_half_px, my + marker_half_px), (60, 60, 60), -1)
         cv2.putText(canvas, str(mid), (mx + 6, my - 6),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (200, 50, 50), 3)
 
-def main():
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_address = ('localhost', 12345)
-    sock.bind(server_address)
-    sock.settimeout(0.02)  # ✅ 타임아웃으로 non-blocking: q 입력 즉시 반응
 
-    # --- 새 타겟 좌표 소켓 ---
+# --- 메인 ---
+def main():
+    # UDP 소켓 초기화
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(('localhost', 12345))
+    sock.settimeout(0.02)
+
     target_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     target_sock.bind(('localhost', 12346))
     target_sock.settimeout(0.02)
 
+    obstacle_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    obstacle_sock.bind(('localhost', 12347))
+    obstacle_sock.settimeout(0.02)
 
-    base = np.full((MAP_PARAMS['size_px'], MAP_PARAMS['size_px'], 3), (240, 240, 240), dtype=np.uint8)
+    base = np.full((MAP_PARAMS['size_px'], MAP_PARAMS['size_px'], 3),
+                   (240, 240, 240), dtype=np.uint8)
     draw_static_map_elements(base)
 
-    print("Listening for camera position data on localhost:12345... (press 'q' to quit)")
+    print("Listening for camera (12345), target (12346), obstacles (12347)... Press 'q' to quit.")
+    bev = base.copy()
+    last_cam_pose = None
+    last_target = None
+    obstacles = []
 
-    bev = base.copy()  # 마지막 프레임(데이터 없어도 화면 띄움)
     while True:
         try:
+            ######################## 카메라 방향 표시 ######################
             s, _ = sock.recvfrom(1024)
-            s = s.decode('utf-8').strip()
-            # "x,y,z,roll,pitch,yaw"
-            x, y, z, roll, pitch, yaw_deg = [float(p) for p in s.split(',')]
+            x, y, z, roll, pitch, yaw_deg = [float(p) for p in s.decode('utf-8').split(',')]
+            last_cam_pose = (x, y, z, roll, pitch, yaw_deg)
+        except socket.timeout:
+            pass
+        except Exception as e:
+            print(f"Bad packet (camera): {e}")
 
-            bev = base.copy()
+            ############################### 타겟 표시 ##############################
+        try:
+            t, _ = target_sock.recvfrom(1024)
+            parts = t.decode('utf-8').split(',')
+            if len(parts) == 4:
+                cls_name = parts[0]
+                tx, ty, tz = map(float, parts[1:])
+            else:
+                cls_name = "object"
+                tx, ty, tz = map(float, parts[:3])
+            last_target = (tx, ty, tz) # 최신 타겟 좌표 저장
+        except socket.timeout:
+            pass
+        except Exception as e:
+            print(f"Bad packet (target): {e}")
 
-            # 시작점
+        bev = base.copy()
+
+        if last_cam_pose is not None:
+            x, y, z, roll, pitch, yaw_deg = last_cam_pose
             sx, sy = world_to_map_coords((x, y))
-
-            # 카메라 좌표 m단위로 표시
-            cv2.putText(bev, f"({x:.2f}, {y:.2f})", (sx + 10, sy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0,0,0), 2)
-
-            # 월드에서 끝점 계산 후 변환(반전/시야중심을 올바르게 반영)
-            arrow_len_m = 0.5  # 0.5m 길이 화살표
+            cv2.putText(bev, f"Me ({x:.1f}, {y:.1f})", (sx+10, sy-10), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0,0,0), 2)
+            arrow_len_m = 0.5
             theta = math.radians(yaw_deg) + (-math.pi/2)
             ex_w = x + arrow_len_m * math.cos(theta)
             ey_w = y + arrow_len_m * math.sin(theta)
             ex, ey = world_to_map_coords((ex_w, ey_w))
 
-            cv2.circle(bev, (sx, sy), 7, (0, 0, 255), -1)
-            cv2.line(bev, (sx, sy), (ex, ey), (0, 0, 255), 2)
+            cv2.circle(bev, (sx, sy), 7, (0,0,255), -1)
+            cv2.line(bev, (sx, sy), (ex, ey), (0,0,255), 2)
 
-        except socket.timeout:
-            # 데이터가 없어도 베이스를 계속 보여줌
-            pass
-        except Exception as e:
-            print(f"Bad packet (camera) | err={e}")
-
-        
-        #여기서 부터는 타겟 좌표 담당 
-        try:
-            t, _ = target_sock.recvfrom(1024)
-            tx, ty, tz = [float(p) for p in t.decode('utf-8').split(',')]
-
-            # 타겟 월드 좌표 → 맵 좌표 변환
+        if last_target is not None:
+            tx, ty, tz = last_target
             px, py = world_to_map_coords((tx, ty))
-
-            # 파란 점으로 타겟 표시
             cv2.circle(bev, (px, py), 8, (255, 0, 0), -1)
-            cv2.putText(bev, f"Target ({tx:.2f},{ty:.2f})", (px+10, py-10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255,0,0), 2)
+            cv2.putText(bev, f"{cls_name} ({tx:.1f}, {ty:.1f})", (px + 10, py - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 0), 2)
 
+################################ 장애물 표시 ###############################
+        try:
+            o, _ = obstacle_sock.recvfrom(1024)
+            ox, oy, oz = [float(p) for p in o.decode('utf-8').split(',')]
+            px, py = world_to_map_coords((ox, oy))
+            obstacles.append((px, py))
         except socket.timeout:
             pass
         except Exception as e:
-            print(f"Bad packet (target) | err={e}")
+            print(f"Bad packet (obstacle): {e}")
 
-        # --- 최종 출력 ---
+        # 누적된 장애물 그리기 (최근 200개만 유지)
+        for (px, py) in obstacles[-200:]:
+            cv2.circle(bev, (px, py), 4, (0, 0, 0), -1)
 
         cv2.imshow("Bird's-Eye View", bev)
-
-        # ✅ 'q' 종료
+        cv2.moveWindow("Bird's-Eye View", 1200, 200) # 팝업 창 위치 설정
         key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):
-            break
-        # 창을 직접 닫았을 때도 종료
-        if cv2.getWindowProperty("Bird's-Eye View", cv2.WND_PROP_VISIBLE) < 1:
+        if key == ord('q') or cv2.getWindowProperty("Bird's-Eye View", cv2.WND_PROP_VISIBLE) < 1:
             break
 
     sock.close()
+    target_sock.close()
+    obstacle_sock.close()
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
