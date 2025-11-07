@@ -22,6 +22,10 @@ class ServingRobotController:
         self.path_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.path_addr = ('localhost', 12348)   # bird_eye_view.py에서 수신할 포트
 
+        # --- BEV 장애물 전송용 UDP 소켓 ---
+        self.obst_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.obst_addr = ('localhost', 12349)
+
         # 상태 변수
         self.state = "SEARCH"
         self.target_found = False
@@ -146,6 +150,14 @@ class ServingRobotController:
             coords_str = ';'.join([f"{x*cell_size},{y*cell_size}" for (x, y) in path])
             self.path_sock.sendto(coords_str.encode('utf-8'), self.path_addr)
             rospy.loginfo(f"[BEV] 경로 {len(path)}개 노드 전송 완료")
+
+        # 장애물 전송
+            obstacle_str = ';'.join([f"{x*cell_size},{y*cell_size}" for (x, y) in obstacles])
+            self.obst_sock.sendto(obstacle_str.encode('utf-8'), self.obst_addr)
+            rospy.loginfo(f"[BEV] 장애물 {len(obstacles)}개 전송 완료")
+
+
+
         except Exception as e:
             rospy.logwarn(f"[BEV] 경로 전송 실패: {e}")
 

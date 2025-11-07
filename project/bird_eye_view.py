@@ -131,6 +131,12 @@ def main():
     path_sock.settimeout(0.02)
     path_points = []
 
+    # >>> 추가 부분 (A* 장애물 수신용) <<<
+    obst_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    obst_sock.bind(('localhost', 12349))   # controller4.py의 obst_sock 포트
+    obst_sock.settimeout(0.02)
+    a_star_obstacles = []
+
     base = np.full((MAP_PARAMS['size_px'], MAP_PARAMS['size_px'], 3),
                    (240, 240, 240), dtype=np.uint8)
     draw_static_map_elements(base)
@@ -225,6 +231,24 @@ def main():
                     px, py = world_to_map_coords((x, y))
                     cv2.circle(bev, (px, py), 4, (0, 255, 255), -1)
 
+                    
+################################ A* 장애물 표시 ################################
+        try:
+            o2, _ = obst_sock.recvfrom(4096)
+            coords = o2.decode('utf-8').split(';')   # "x1,y1;x2,y2;..." 형태
+            a_star_obstacles = [tuple(map(float, c.split(','))) for c in coords if c]
+        except socket.timeout:
+            pass
+        except Exception as e:
+            print(f"Bad packet (A* obstacles): {e}")
+
+        # A* 장애물 시각화 (빨간 점)
+        for (x, y) in a_star_obstacles:
+            px, py = world_to_map_coords((x, y))
+            cv2.circle(bev, (px, py), 6, (0, 0, 255), -1)
+
+
+
 
         cv2.imshow("Bird's-Eye View", bev)
         cv2.moveWindow("Bird's-Eye View", 1200, 200) # 팝업 창 위치 설정
@@ -239,6 +263,8 @@ def main():
     target_sock.close()
     obstacle_sock.close()
     path_sock.close() 
+    obst_sock.close()
+
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
