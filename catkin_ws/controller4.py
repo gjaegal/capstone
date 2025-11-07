@@ -35,6 +35,9 @@ class ServingRobotController:
     # ----------------------------- 콜백 및 유틸리티 함수들-----------------------------
 
     def target_point_callback(self, msg):
+        if self.target_found:
+            return
+            
         rospy.loginfo(f"타겟 좌표: x={msg.x:.2f}, y={msg.y:.2f}, z={msg.z:.2f}")
         self.target_position = (msg.x, msg.y)
         self.target_found = True
