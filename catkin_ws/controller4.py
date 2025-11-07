@@ -94,7 +94,7 @@ class ServingRobotController:
         if not hasattr(self, 'search_left'):
             self.search_left = True
 
-        # 👉 최초 실행이면 각도를 절반으로 줄이기
+        # 최초 실행이면 각도를 절반으로 줄이기
         if not self.search_initialized:
             angle_deg = base_angle_deg / 2.0   # 예: 45도
             self.search_initialized = True

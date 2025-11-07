@@ -346,13 +346,12 @@ class RealSenseLocalizationStreamer:
                                 [ half_len, -half_len, 0],
                                 [-half_len, -half_len, 0]
                             ])
-
                         obj_points = world_center + obj_pts_marker
                         img_points = closest_corners.reshape(4, 2)
 
 
 
-
+                        
 
                         # pose 계산 (RANSAC)
                         ok, rvec_g, tvec_g, _ = cv2.solvePnPRansac(
