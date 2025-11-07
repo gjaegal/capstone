@@ -58,24 +58,30 @@ class RealSenseLocalizationStreamer:
         self.align = rs.align(rs.stream.color)
         
         self.marker_length_m = 0.20
-        self.marker_ids = set(range(12))
+        self.marker_ids = set(range(16))
 
         # 실제 맵 (BEV_guide 기반, m 단위, 원점 = ID0)
         self.marker_world_pos = {
-            0:  np.array([0.0, 0.0, 0.0], dtype=np.float32),
-            1:  np.array([1.5, 0.0, 0.0], dtype=np.float32),
-            2:  np.array([3.2, 0.0, 0.0], dtype=np.float32),
-            3:  np.array([5.0, 0.0, 0.0], dtype=np.float32),
+            0:  np.array([0.0, 0.0, 2.0], dtype=np.float32),
+            1:  np.array([1.5, 0.0, 2.0], dtype=np.float32),
+            2:  np.array([3.2, 0.0, 2.0], dtype=np.float32),
+            3:  np.array([5.0, 0.0, 2.0], dtype=np.float32),
 
-            4:  np.array([0.0, 1.5, 0.0], dtype=np.float32),
-            5:  np.array([1.6, 1.5, 0.0], dtype=np.float32),
-            6:  np.array([3.2, 1.5, 0.0], dtype=np.float32),
-            7:  np.array([4.8, 1.5, 0.0], dtype=np.float32),
+            4:  np.array([0.0, 1.5, 2.0], dtype=np.float32),
+            5:  np.array([1.6, 1.5, 2.0], dtype=np.float32),
+            6:  np.array([3.2, 1.5, 2.0], dtype=np.float32),
+            7:  np.array([4.8, 1.5, 2.0], dtype=np.float32),
 
-            8:  np.array([0.0, 3.0, 0.0], dtype=np.float32),
-            9:  np.array([1.5, 3.0, 0.0], dtype=np.float32),
-            10: np.array([3.1, 3.0, 0.0], dtype=np.float32),
-            11: np.array([5.0, 3.0, 0.0], dtype=np.float32),
+            8:  np.array([0.0, 3.0, 2.0], dtype=np.float32),
+            9:  np.array([1.5, 3.0, 2.0], dtype=np.float32),
+            10: np.array([3.1, 3.0, 2.0], dtype=np.float32),
+            11: np.array([5.0, 3.0, 2.0], dtype=np.float32),
+
+            12: np.array([0.75, -0.1, 0.5], dtype=np.float32),
+            13: np.array([3.2, -0.1, 0.5], dtype=np.float32),
+            14: np.array([0.0, 3.5, 0.5], dtype=np.float32),
+            15: np.array([3.2, 3.5, 0.5], dtype=np.float32),
+
         }
         
         self.axis_scale = 0.15
@@ -171,7 +177,7 @@ class RealSenseLocalizationStreamer:
 
     def _put_localization_text(self, img, pos, angles_deg):
         roll, pitch, yaw = angles_deg
-        cv2.putText(img, f'Cam Pos [m]: X={pos[0]:.2f}, Y={pos[1]:.2f}, Z={pos[2]:.2f}', (10, 20),
+        cv2.putText(img, f'Cam Pos [m]: X={pos[0]:.1f}, Y={pos[1]:.1f}, Z={pos[2]:.1f}', (10, 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
         cv2.putText(img, f'Cam Ang [deg]: Roll={roll:.1f}, Pitch={pitch:.1f}, Yaw={yaw:.1f}', (10, 45),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
@@ -292,7 +298,7 @@ class RealSenseLocalizationStreamer:
 
                     # 각 마커의 3D 거리(norm) 계산
                     distances = np.linalg.norm(tvecs.reshape(-1, 3), axis=1)
-                    valid_mask = distances <= 4.0 # 4m 밖의 마커는 인식하지 않도록 함 (localization 안정성)
+                    valid_mask = distances <= 5.0 # 5m 밖의 마커는 인식하지 않도록 함 (localization 안정성)
                     if not np.any(valid_mask):
                         continue
                     tvecs = tvecs[valid_mask]
@@ -363,11 +369,10 @@ class RealSenseLocalizationStreamer:
                             coord_str = f"{stable_pos[0]},{stable_pos[1]},{stable_pos[2]},{ang[0]},{ang[1]},{ang[2]}"
                             self.sock.sendto(coord_str.encode('utf-8'), self.server_address)
 
-                            xy_angle = (stable_pos[0], stable_pos[1], ang[2])
                             if self.publish_point is not None:
-                                self.publish_point(xy_angle, "current")
+                                self.publish_point(stable_pos, "current")
 
-                            self.current_position = xy_angle
+                            self.current_position = stable_pos
 
                 if self.show_windows:
                     cv2.imshow('RealSense Integrated Stream', color_image)
