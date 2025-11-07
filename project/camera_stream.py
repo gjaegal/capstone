@@ -363,10 +363,11 @@ class RealSenseLocalizationStreamer:
                             coord_str = f"{stable_pos[0]},{stable_pos[1]},{stable_pos[2]},{ang[0]},{ang[1]},{ang[2]}"
                             self.sock.sendto(coord_str.encode('utf-8'), self.server_address)
 
+                            xy_angle = (stable_pos[0], stable_pos[1], ang[2])
                             if self.publish_point is not None:
-                                self.publish_point(stable_pos, "current")
+                                self.publish_point(xy_angle, "current")
 
-                            self.current_position = stable_pos
+                            self.current_position = xy_angle
 
                 if self.show_windows:
                     cv2.imshow('RealSense Integrated Stream', color_image)
