@@ -27,6 +27,7 @@ class ServingRobotController:
         self.target_found = False
         self.current_position = (0.0, 0.0)
         self.target_position = (0.5, 0.5)
+        self.current_dir = (1, 0)  # 초기 방향: x축 양의 방향
 
         self.twist = Twist()
         rospy.loginfo("서빙 로봇 컨트롤러 시작 - YOLO+RealSense 모드")
@@ -43,6 +44,7 @@ class ServingRobotController:
         if self.current_position != (msg.x, msg.y):
             rospy.loginfo(f"현재 좌표: x={msg.x:.2f}, y={msg.y:.2f}, z={msg.z:.2f}")
             self.current_position = (msg.x, msg.y)
+            self.current_dir = (msg.x)
 
     def get_current_yaw(self):
         """
@@ -182,7 +184,7 @@ class ServingRobotController:
         move_time = cell_size / speed
         rotate_speed = 0.5
 
-        dir = (1, 0)  # 초기 방향
+        dir = self.current_dir  # 초기 방향
 
         for i in range(1, len(path)):
             current, next_p = path[i - 1], path[i]
@@ -211,6 +213,7 @@ class ServingRobotController:
                 continue
 
             dir = (dx, dy)
+            self.current_dir = dir
 
             start_time = rospy.Time.now().to_sec()
             while rospy.Time.now().to_sec() - start_time < move_time + 1:
