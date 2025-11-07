@@ -8,19 +8,27 @@ import math
 
 # --- 실제 맵 좌표 (단위: m) ---
 MARKER_WORLD_COORDS = {
-    0:  np.array([0.0, 0.0, 0.0]),
-    1:  np.array([1.5, 0.0, 0.0]),
-    2:  np.array([3.2, 0.0, 0.0]),
-    3:  np.array([5.0, 0.0, 0.0]),
-    4:  np.array([0.0, 1.5, 0.0]),
-    5:  np.array([1.6, 1.5, 0.0]),
-    6:  np.array([3.2, 1.5, 0.0]),
-    7:  np.array([4.8, 1.5, 0.0]),
-    8:  np.array([0.0, 3.0, 0.0]),
-    9:  np.array([1.5, 3.0, 0.0]),
-    10: np.array([3.1, 3.0, 0.0]),
-    11: np.array([5.0, 3.0, 0.0]),
-}
+            0:  np.array([0.0, 0.0, 2.0], dtype=np.float32),
+            1:  np.array([1.5, 0.0, 2.0], dtype=np.float32),
+            2:  np.array([3.2, 0.0, 2.0], dtype=np.float32),
+            3:  np.array([5.0, 0.0, 2.0], dtype=np.float32),
+
+            4:  np.array([0.0, 1.5, 2.0], dtype=np.float32),
+            5:  np.array([1.6, 1.5, 2.0], dtype=np.float32),
+            6:  np.array([3.2, 1.5, 2.0], dtype=np.float32),
+            7:  np.array([4.8, 1.5, 2.0], dtype=np.float32),
+
+            8:  np.array([0.0, 3.0, 2.0], dtype=np.float32),
+            9:  np.array([1.5, 3.0, 2.0], dtype=np.float32),
+            10: np.array([3.1, 3.0, 2.0], dtype=np.float32),
+            11: np.array([5.0, 3.0, 2.0], dtype=np.float32),
+
+            12: np.array([0.75, -0.1, 0.5], dtype=np.float32),
+            13: np.array([3.2, -0.1, 0.5], dtype=np.float32),
+            14: np.array([0.0, 3.5, 0.5], dtype=np.float32),
+            15: np.array([3.2, 3.2, 0.5], dtype=np.float32),
+
+        }
 MARKER_LENGTH_M = 0.20
 
 # --- 맵/렌더링 설정 ---
@@ -99,14 +107,50 @@ def draw_static_map_elements(canvas):
     cv2.putText(canvas, "ID0 (0,0)", (id0_px + 10, id0_py - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
 
-    # ----- 아루코 마커 사각형/라벨 -----
+    # ----- 아루코 마커 렌더링 (천장=사각형, 벽=굵은 선) -----
     marker_half_px = int(MARKER_LENGTH_M * MAP_PARAMS['scale'] / 2)
+
+    LINE_LEN_M = 0.6   # 선 길이 (미터)
+    THICK_PX   = 8     # 선 두께 (픽셀)
+
     for mid, w in MARKER_WORLD_COORDS.items():
         mx, my = world_to_map_coords((w[0], w[1]))
-        cv2.rectangle(canvas, (mx - marker_half_px, my - marker_half_px),
-                      (mx + marker_half_px, my + marker_half_px), (60, 60, 60), -1)
-        cv2.putText(canvas, str(mid), (mx + 6, my - 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (200, 50, 50), 3)
+
+        if w[2] >= 1.0:
+            # 천장 마커 (0~11): 사각형 표시
+            cv2.rectangle(
+                canvas,
+                (mx - marker_half_px, my - marker_half_px),
+                (mx + marker_half_px, my + marker_half_px),
+                (60, 60, 60),
+                -1
+            )
+            cv2.putText(canvas, str(mid), (mx + 6, my - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+
+        else:
+            # --- 벽 마커 (12~15): 두꺼운 빨간 선 ---
+            if mid in (12, 13):
+                # 수평선, y축으로 살짝 아래로 (-0.1m)
+                y_offset = -0.1
+                p1_w = (w[0] - LINE_LEN_M/2, w[1] + y_offset)
+                p2_w = (w[0] + LINE_LEN_M/2, w[1] + y_offset)
+            elif mid == 14:
+                # 수직선
+                p1_w = (w[0], w[1] - LINE_LEN_M/2)
+                p2_w = (w[0], w[1] + LINE_LEN_M/2)
+            elif mid == 15:
+                # 수평선 (일반)
+                p1_w = (w[0] - LINE_LEN_M/2, w[1])
+                p2_w = (w[0] + LINE_LEN_M/2, w[1])
+            else:
+                continue
+
+            x1, y1 = world_to_map_coords(p1_w)
+            x2, y2 = world_to_map_coords(p2_w)
+            cv2.line(canvas, (x1, y1), (x2, y2), (0, 0, 0), thickness=THICK_PX)
+            cv2.putText(canvas, str(mid), (mx + 6, my - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
 
 
 # --- 메인 ---
@@ -131,12 +175,6 @@ def main():
     path_sock.settimeout(0.02)
     path_points = []
 
-    # >>> 추가 부분 (A* 장애물 수신용) <<<
-    obst_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    obst_sock.bind(('localhost', 12349))   # controller4.py의 obst_sock 포트
-    obst_sock.settimeout(0.02)
-    a_star_obstacles = []
-
     base = np.full((MAP_PARAMS['size_px'], MAP_PARAMS['size_px'], 3),
                    (240, 240, 240), dtype=np.uint8)
     draw_static_map_elements(base)
@@ -146,6 +184,8 @@ def main():
     last_cam_pose = None
     last_target = None
     obstacles = []
+    target_locked = False
+    locked_cls = "object"
 
     while True:
         try:
@@ -161,14 +201,22 @@ def main():
             ############################### 타겟 표시 ##############################
         try:
             t, _ = target_sock.recvfrom(1024)
-            parts = t.decode('utf-8').split(',')
+            msg = t.decode('utf-8')
+            print(f"[DEBUG] Target UDP: {msg}")
+            parts = msg.split(',')
+
             if len(parts) == 4:
                 cls_name = parts[0]
                 tx, ty, tz = map(float, parts[1:])
             else:
                 cls_name = "object"
                 tx, ty, tz = map(float, parts[:3])
-            last_target = (tx, ty, tz) # 최신 타겟 좌표 저장
+
+            # if 'target_locked' not in locals() or not target_locked:
+            #     last_target = (tx, ty, tz)
+            #     locked_cls = cls_name
+            #     target_locked = True
+            #     print(f"[LOCK] 타겟 좌표 고정: {last_target}, : {locked_cls}")
         except socket.timeout:
             pass
         except Exception as e:
@@ -189,11 +237,11 @@ def main():
             cv2.circle(bev, (sx, sy), 7, (0,0,255), -1)
             cv2.line(bev, (sx, sy), (ex, ey), (0,0,255), 2)
 
-        if last_target is not None:
-            tx, ty, tz = last_target
-            px, py = world_to_map_coords((tx, ty))
-            cv2.circle(bev, (px, py), 8, (255, 0, 0), -1)
-            cv2.putText(bev, f"{cls_name} ({tx:.1f}, {ty:.1f})", (px + 10, py - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 0), 2)
+        # if last_target is not None:
+        #     tx, ty, tz = last_target
+        #     px, py = world_to_map_coords((tx, ty))
+        #     cv2.circle(bev, (px, py), 8, (255, 0, 0), -1)
+        #     cv2.putText(bev, f"{cls_name} ({tx:.1f}, {ty:.1f})", (px + 10, py - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 0), 2)
 
 ################################ 장애물 표시 ################################
         try:
@@ -230,24 +278,15 @@ def main():
                 for (x, y) in pts:
                     px, py = world_to_map_coords((x, y))
                     cv2.circle(bev, (px, py), 4, (0, 255, 255), -1)
+        
+            # Target 시각화
+            last_target = path_points[-1]
 
-                    
-################################ A* 장애물 표시 ################################
-        try:
-            o2, _ = obst_sock.recvfrom(4096)
-            coords = o2.decode('utf-8').split(';')   # "x1,y1;x2,y2;..." 형태
-            a_star_obstacles = [tuple(map(float, c.split(','))) for c in coords if c]
-        except socket.timeout:
-            pass
-        except Exception as e:
-            print(f"Bad packet (A* obstacles): {e}")
-
-        # A* 장애물 시각화 (빨간 점)
-        for (x, y) in a_star_obstacles:
-            px, py = world_to_map_coords((x, y))
-            cv2.circle(bev, (px, py), 6, (0, 0, 255), -1)
-
-
+            if last_target is not None:
+                (tx, ty) = last_target
+                px, py = world_to_map_coords((tx, ty))
+                cv2.circle(bev, (px, py), 8, (255, 0, 0), -1)
+                cv2.putText(bev, f"{cls_name} ({tx:.1f}, {ty:.1f})", (px + 10, py - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 0), 2)
 
 
         cv2.imshow("Bird's-Eye View", bev)
@@ -263,8 +302,6 @@ def main():
     target_sock.close()
     obstacle_sock.close()
     path_sock.close() 
-    obst_sock.close()
-
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
