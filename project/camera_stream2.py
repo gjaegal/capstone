@@ -8,6 +8,8 @@ import math
 import socket # UDP 통신을 위함
 import time
 import rospy
+from gesture_detector import GestureDetector
+
 
 class RealSenseLocalizationStreamer:
     """
@@ -37,7 +39,9 @@ class RealSenseLocalizationStreamer:
                  on_detections=None,
                  on_poses=None,
                  publish_point=None):
-        
+
+
+        self.gesture = GestureDetector()
         self.det_model = YOLO(yolo_det_weights)
         self.pose_model = YOLO(yolo_pose_weights)
         self.tracker = DeepSort(max_age = tracker_max_age)
@@ -257,23 +261,46 @@ class RealSenseLocalizationStreamer:
 
                             cv2.putText(color_image, label, (x1, max(0, y1 - 6)),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
+
+                            # --- Human pose estimation + hand raise detection ---
                             
-                            # Human pose estimation
-                            # if cls_name.lower() == "person" and conf > self.MIN_CONF_DET:
-                            #     crop_img = color_image[y1:y2, x1:x2]
-                            #     pose_results = self.pose_model(crop_img, verbose=False)
-                            #     for pose in pose_results:
-                            #         if not hasattr(pose, "keypoints") or pose.keypoints is None:
-                            #             continue
-                            #         keypoints = pose.keypoints.data.cpu().numpy()
-                            #         for person_kpt in keypoints:
-                            #             abs_kpts = []
-                            #             for (x, y, c) in person_kpt:
-                            #                 if np.isnan(x) or np.isnan(y) or c < self.MIN_CONF_POSE:
-                            #                     abs_kpts.append((None, None))
-                            #                 else:
-                            #                     abs_kpts.append((int(x1 + x), int(y1 + y)))
-                            #             self._draw_pose_with_headrule(color_image, abs_kpts)
+                        if cls_name.lower() == "person" and conf > self.MIN_CONF_DET:
+                            crop_img = color_image[y1:y2, x1:x2]
+                            pose_results = self.pose_model(crop_img, verbose=False)
+
+                            for pose in pose_results:
+                                if not hasattr(pose, "keypoints") or pose.keypoints is None:
+                                    continue
+
+                                # YOLO keypoints: (17, 3)
+                                kpts = pose.keypoints.data.cpu().numpy()[0]
+
+                                # Crop → 원본 이미지 절대 좌표
+                                abs_kpts = self.gesture.extract_absolute_keypoints(kpts, x1, y1)
+
+                                # 포즈 그리기
+                                self._draw_pose_with_headrule(color_image, abs_kpts)
+
+                                # 손 들었는지 체크
+                                if self.gesture.is_hand_raised(abs_kpts):
+                                    print("🔵 Hand Raised Detected!")
+                            
+                        # Human pose estimation
+                        # if cls_name.lower() == "person" and conf > self.MIN_CONF_DET:
+                        #     crop_img = color_image[y1:y2, x1:x2]
+                        #     pose_results = self.pose_model(crop_img, verbose=False)
+                        #     for pose in pose_results:
+                        #         if not hasattr(pose, "keypoints") or pose.keypoints is None:
+                        #             continue
+                        #         keypoints = pose.keypoints.data.cpu().numpy()
+                        #         for person_kpt in keypoints:
+                        #             abs_kpts = []
+                        #             for (x, y, c) in person_kpt:
+                        #                 if np.isnan(x) or np.isnan(y) or c < self.MIN_CONF_POSE:
+                        #                     abs_kpts.append((None, None))
+                        #                 else:
+                        #                     abs_kpts.append((int(x1 + x), int(y1 + y)))
+                        #             self._draw_pose_with_headrule(color_image, abs_kpts)
 
                 # --- 객체 추적 ID 표시 ---
                 tracks = self.tracker.update_tracks(tracker_bboxes, frame=color_image)
