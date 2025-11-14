@@ -318,44 +318,57 @@ class RealSenseLocalizationStreamer:
                             cam_rotations.append(R)
 
                         # =====================================================
-                        # Multi-marker pose fusion
+                        # Multi-marker pose fusion (Weighted)
                         # =====================================================
+
                         if len(cam_positions) > 0:
 
-                            cam_positions = np.array(cam_positions)
-                            mean_pos = np.mean(cam_positions, axis=0)
+                            cam_positions = np.array(cam_positions)    # shape (N,3)
+                            cam_rotations = np.array(cam_rotations)    # shape (N,3,3)
 
-                            R_stack = np.stack(cam_rotations)
-                            R_mean = R_stack.mean(axis=0)
-                            U,_,Vt = np.linalg.svd(R_mean)
+                            # ---------------------------
+                            # 1) 거리 기반 가중치 계산
+                            # ---------------------------
+                            dists = np.linalg.norm(cam_positions, axis=1)
+                            w = 1.0 / (dists + 1e-6)
+                            w = w / np.sum(w)
+
+                            # ---------------------------
+                            # 2) 가중 평균 위치
+                            # ---------------------------
+                            mean_pos = np.sum(cam_positions * w[:, None], axis=0)
+
+                            # ---------------------------
+                            # 3) 가중 평균 회전행렬
+                            # ---------------------------
+                            R_weighted = np.sum(cam_rotations * w[:, None, None], axis=0)
+                            U,_,Vt = np.linalg.svd(R_weighted)
                             R_mean = U @ Vt
 
-                            ang = np.degrees(self._rotation_matrix_to_euler(R_mean))
+                            # Euler angle 추출
                             roll, pitch, yaw = np.degrees(self._rotation_matrix_to_euler(R_mean))
                             yaw = -yaw
                             ang = (roll, pitch, yaw)
 
+                            # ---------------------------
+                            # 4) smoothing (temporal filter)
+                            # ---------------------------
                             if not hasattr(self,'filtered_pos') or self.filtered_pos is None:
                                 self.filtered_pos = mean_pos
                             else:
-                                self.filtered_pos = 0.85*self.filtered_pos + 0.15*mean_pos
+                                self.filtered_pos = 0.85 * self.filtered_pos + 0.15 * mean_pos
 
                             stable = self.filtered_pos
                             xy_angle = (stable[0], stable[1], ang[2])
                             self.current_position = xy_angle
 
-                            # Camera pose print
+                            # Print
                             cv2.putText(color,
                                         f"Cam(World): X={stable[0]:.2f}, Y={stable[1]:.2f}, Z={stable[2]:.2f}",
-                                        (10, 25),
-                                        cv2.FONT_HERSHEY_SIMPLEX,
-                                        0.6, (0,255,255), 2)
-
+                                        (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
                             cv2.putText(color,
                                         f"Yaw={ang[2]:.1f} deg",
-                                        (10, 50),
-                                        cv2.FONT_HERSHEY_SIMPLEX,
-                                        0.6, (0,255,255), 2)
+                                        (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
 
                             # UDP publish
                             msg = f"{stable[0]},{stable[1]},{stable[2]},{ang[0]},{ang[1]},{ang[2]}"
@@ -366,6 +379,9 @@ class RealSenseLocalizationStreamer:
 
                             self.last_R_world = R_mean
                             self.last_t_world = stable
+                            self.last_cam_world = stable
+
+
                             
 
                             birdseye = self._create_birdseye_view(stable[0], stable[1], ang[2])
