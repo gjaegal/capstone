@@ -106,6 +106,9 @@ class RealSenseLocalizationStreamer:
         self.current_position = None
         self.publish_timer = rospy.Timer(rospy.Duration(1.5), self._publish_cb)
         self.detected_targets = []
+        self.locked_target = None
+
+        
 
          # Bird's Eye View parameters
         self.map_width = 800
@@ -232,12 +235,13 @@ class RealSenseLocalizationStreamer:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
 
 
-        # ===== Draw detected targets =====
-        for tx, ty, tname in self.detected_targets:
+        # ------ Draw locked target (only one) ------
+        if self.locked_target is not None:
+            tx, ty, tname = self.locked_target
             tp_x, tp_y = self._world_to_map(tx, ty)
-            cv2.circle(map_img, (tp_x, tp_y), 8, (0, 165, 255), -1)
+            cv2.circle(map_img, (tp_x, tp_y), 8, (0,165,255), -1)
             cv2.putText(map_img, tname, (tp_x + 10, tp_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 100, 200), 1)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,100,200), 1)
         
         return map_img
 
@@ -401,7 +405,7 @@ class RealSenseLocalizationStreamer:
                                 cv2.imshow("Bird's Eye View", birdseye)
 
                 # Target detection → world coordinates + Print
-                if self.last_R_world is not None and self.last_cam_world is not None:
+                if hasattr(self, 'last_R_world') and hasattr(self, 'last_cam_world'):
 
                     det_results = self.det_model(color, verbose=False)
 
@@ -452,9 +456,8 @@ class RealSenseLocalizationStreamer:
 
 
                             # BEV용 타겟 저장
-                            self.detected_targets.append((Pw[0], Pw[1], cls_name))
-                            if len(self.detected_targets) > 10:
-                                self.detected_targets.pop(0)
+                            if self.locked_target is None:
+                                self.locked_target = (Pw[0], Pw[1], cls_name)
 
 
                             # UDP publish
