@@ -230,6 +230,7 @@ class ServingRobotController:
         # 초기 진행방향(그리드 단위)
         dir_vec = self.yaw_to_dir(yaw_deg)
         rospy.loginfo(f"[DIR] 초기방향(BEV): {dir_vec}")
+        dir_vec = (-dir_vec[0], dir_vec[1])
 
         rate = rospy.Rate(20)
         for i in range(1, len(path)):
@@ -262,7 +263,7 @@ class ServingRobotController:
                 continue
 
             # 진행방향 갱신
-            dir_vec = (dx, dy)
+            dir_vec = (-dx, dy)
             self.current_position[0] += dir_vec[0] * 0.5
             self.current_position[1] += dir_vec[1] * 0.5
 
