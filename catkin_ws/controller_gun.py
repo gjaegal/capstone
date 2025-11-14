@@ -141,9 +141,9 @@ class ServingRobotController:
     def yaw_to_dir(self, yaw_deg):
         yaw_norm = yaw_deg % 360.0
         if   45 <= yaw_norm < 135:   return [0, 1]    # 동
-        elif 135 <= yaw_norm < 225:  return [1, 0]    # 남
+        elif 135 <= yaw_norm < 225:  return [-1, 0]    # 남
         elif 225 <= yaw_norm < 315:  return [0, -1]   # 서
-        else:                        return [-1, 0]   # 북
+        else:                        return [1, 0]   # 북
 
     def stop_robot(self):
         self.twist.linear.x = 0.0
@@ -183,7 +183,7 @@ class ServingRobotController:
             rospy.logwarn("경로 없음 → SEARCH 복귀")
             return
 
-        rospy.loginfo(f"A* 완료: {len(path)} 스텝")
+        rospy.loginfo(f"[A*] 전체 경로: {path}")
 
         # 이동 파라미터
         speed        = 0.15
@@ -194,10 +194,11 @@ class ServingRobotController:
         rate = rospy.Rate(20)
         for i in range(1, len(path)):
             current, next_p = path[i - 1], path[i]
+            rospy.loginfo(f"[PATH] {current} -> {next_p} 이동")
             dx, dy = next_p[0] - current[0], next_p[1] - current[1]
 
             cross = dir_vec[0]*dy - dir_vec[1]*dx
-            if (dx, dy) == dir_vec:
+            if [dx, dy] == dir_vec:
                 rospy.loginfo("직진")
 
             elif cross > 0:
@@ -261,6 +262,7 @@ class ServingRobotController:
             else:
                 self.rotate_right()
                 self.rotate_left()
+            self.search_left = not self.search_left
 
             rate.sleep()
             # 회전 동안 target을 찾았다면 APPROACH 모드로 전환
