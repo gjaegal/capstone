@@ -347,7 +347,7 @@ class RealSenseLocalizationStreamer:
 
                             # Euler angle 추출
                             roll, pitch, yaw = np.degrees(self._rotation_matrix_to_euler(R_mean))
-                            yaw = -yaw + 90 #각도 보정
+                            yaw = yaw + 90 #각도 보정
                             ang = (roll, pitch, yaw)
 
                             # ---------------------------
