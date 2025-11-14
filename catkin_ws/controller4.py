@@ -147,8 +147,8 @@ class ServingRobotController:
         if self.target_found:
             rospy.loginfo("[SEARCH] 타겟 감지됨 → APPROACH 모드 대기 중...")
 
-        base_angle_deg = 180.0
-        angular_speed = 0.3
+        base_angle_deg = 90.0
+        angular_speed = 0.5
 
         if not self.search_initialized:
             angle_deg = base_angle_deg / 2.0   # 첫 탐색 90도
@@ -249,12 +249,12 @@ class ServingRobotController:
                 rospy.loginfo("후진")
                 self.twist.linear.x = -speed
 
-            elif cross > 0:
+            elif cross < 0:
                 rospy.loginfo("반시계 90° 후 직진")
                 self._rotate(angle_deg=90.0, angular_speed=rotate_speed)
                 self.twist.linear.x = speed
 
-            elif cross < 0:
+            elif cross > 0:
                 rospy.loginfo("시계 90° 후 직진")
                 self._rotate(angle_deg=-90.0, angular_speed=rotate_speed)
                 self.twist.linear.x = speed
