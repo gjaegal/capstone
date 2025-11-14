@@ -253,7 +253,7 @@ class RealSenseLocalizationStreamer:
                     )
 
                     dist = np.linalg.norm(tvecs.reshape(-1,3), axis=1)
-                    valid = dist <= 4.0
+                    valid = dist <= 2.5
 
                     if np.any(valid):
 
@@ -347,7 +347,7 @@ class RealSenseLocalizationStreamer:
 
                             # Euler angle 추출
                             roll, pitch, yaw = np.degrees(self._rotation_matrix_to_euler(R_mean))
-                            yaw = -yaw
+                            yaw = -yaw + 90 #각도 보정
                             ang = (roll, pitch, yaw)
 
                             # ---------------------------
