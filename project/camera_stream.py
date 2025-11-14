@@ -105,6 +105,13 @@ class RealSenseLocalizationStreamer:
         self.current_position = None
         self.publish_timer = rospy.Timer(rospy.Duration(1.5), self._publish_cb)
 
+         # Bird's Eye View parameters
+        self.map_width = 800
+        self.map_height = 600
+        self.meters_per_pixel = 100  # 100 pixels per meter
+        self.map_origin_x = 50  # offset from left edge
+        self.map_origin_y = 550  # offset from bottom edge
+
 
     # =====================================================
     # Utilities
@@ -157,6 +164,70 @@ class RealSenseLocalizationStreamer:
             y = math.atan2(-R[2,0], sy)
             z = 0
         return np.array([x,y,z])
+    
+
+    # --------------------- Bird's Eye View Visualization ---------------------
+    def _world_to_map(self, x, y):
+        """Convert world coordinates (meters) to map pixel coordinates"""
+        px = int(self.map_origin_x + x * self.meters_per_pixel)
+        py = int(self.map_origin_y - y * self.meters_per_pixel)  # flip Y axis
+        return px, py
+    
+    def _create_birdseye_view(self, cam_x, cam_y, cam_yaw):
+        """Create bird's eye view map with camera position and orientation"""
+        # Create blank map
+        map_img = np.ones((self.map_height, self.map_width, 3), dtype=np.uint8) * 240
+        
+        # Draw grid
+        for i in range(0, 8):
+            px, py = self._world_to_map(i, 0)
+            cv2.line(map_img, (px, 0), (px, self.map_height), (200, 200, 200), 1)
+        for j in range(0, 5):
+            px, py = self._world_to_map(0, j)
+            cv2.line(map_img, (0, py), (self.map_width, py), (200, 200, 200), 1)
+        
+        # Draw ArUco marker positions
+        for marker_id, pos in self.marker_world_pos.items():
+            px, py = self._world_to_map(pos[0], pos[1])
+            cv2.circle(map_img, (px, py), 5, (100, 100, 255), -1)
+            cv2.putText(map_img, str(marker_id), (px + 8, py + 5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 100, 255), 1)
+        
+        # Draw camera position
+        cam_px, cam_py = self._world_to_map(cam_x, cam_y)
+        
+        # Draw camera circle
+        cv2.circle(map_img, (cam_px, cam_py), 12, (0, 255, 0), -1)
+        cv2.circle(map_img, (cam_px, cam_py), 12, (0, 200, 0), 2)
+        
+        # Draw direction arrow based on yaw
+        arrow_length = 30
+        arrow_end_x = int(cam_px + arrow_length * math.cos(math.radians(cam_yaw)))
+        arrow_end_y = int(cam_py - arrow_length * math.sin(math.radians(cam_yaw)))  # flip Y
+        cv2.arrowedLine(map_img, (cam_px, cam_py), (arrow_end_x, arrow_end_y),
+                       (0, 0, 255), 3, tipLength=0.3)
+        
+        # Draw coordinate info
+        cv2.putText(map_img, f"Position: ({cam_x:.2f}, {cam_y:.2f})",
+                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        cv2.putText(map_img, f"Yaw: {cam_yaw:.1f} deg",
+                   (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        
+        # Draw legend
+        cv2.putText(map_img, "Legend:", (10, self.map_height - 80),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+        cv2.circle(map_img, (20, self.map_height - 55), 5, (100, 100, 255), -1)
+        cv2.putText(map_img, "ArUco Markers", (35, self.map_height - 50),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+        cv2.circle(map_img, (20, self.map_height - 30), 8, (0, 255, 0), -1)
+        cv2.putText(map_img, "Camera", (35, self.map_height - 25),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+        cv2.arrowedLine(map_img, (15, self.map_height - 10), (30, self.map_height - 10),
+                       (0, 0, 255), 2, tipLength=0.4)
+        cv2.putText(map_img, "Direction", (35, self.map_height - 5),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+        
+        return map_img
 
 
     # =====================================================
@@ -295,6 +366,11 @@ class RealSenseLocalizationStreamer:
 
                             self.last_R_world = R_mean
                             self.last_t_world = stable
+                            
+
+                            birdseye = self._create_birdseye_view(stable[0], stable[1], ang[2])
+                            if self.show_windows:
+                                cv2.imshow("Bird's Eye View", birdseye)
 
                 # Target detection → world coordinates + Print
                 if hasattr(self, 'last_R_world') and hasattr(self, 'last_cam_world'):
