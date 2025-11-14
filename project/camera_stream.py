@@ -72,6 +72,7 @@ class RealSenseLocalizationStreamer:
             9: np.array([2.0, 3.0, 0.0]),
             10: np.array([4.0, 3.0, 0.0]),
             11: np.array([6.0, 3.0, 0.0]),
+            
         }
 
         # ---------------------------------------
@@ -104,6 +105,7 @@ class RealSenseLocalizationStreamer:
 
         self.current_position = None
         self.publish_timer = rospy.Timer(rospy.Duration(1.5), self._publish_cb)
+        self.detected_targets = []
 
          # Bird's Eye View parameters
         self.map_width = 800
@@ -111,6 +113,8 @@ class RealSenseLocalizationStreamer:
         self.meters_per_pixel = 100  # 100 pixels per meter
         self.map_origin_x = 50  # offset from left edge
         self.map_origin_y = 550  # offset from bottom edge
+
+
 
 
     # =====================================================
@@ -226,6 +230,14 @@ class RealSenseLocalizationStreamer:
                        (0, 0, 255), 2, tipLength=0.4)
         cv2.putText(map_img, "Direction", (35, self.map_height - 5),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+
+
+        # ===== Draw detected targets =====
+        for tx, ty, tname in self.detected_targets:
+            tp_x, tp_y = self._world_to_map(tx, ty)
+            cv2.circle(map_img, (tp_x, tp_y), 8, (0, 165, 255), -1)
+            cv2.putText(map_img, tname, (tp_x + 10, tp_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 100, 200), 1)
         
         return map_img
 
@@ -389,7 +401,7 @@ class RealSenseLocalizationStreamer:
                                 cv2.imshow("Bird's Eye View", birdseye)
 
                 # Target detection → world coordinates + Print
-                if hasattr(self, 'last_R_world') and hasattr(self, 'last_cam_world'):
+                if self.last_R_world is not None and self.last_cam_world is not None:
 
                     det_results = self.det_model(color, verbose=False)
 
@@ -436,6 +448,14 @@ class RealSenseLocalizationStreamer:
                                         (x1, max(0, y1-20)),
                                         cv2.FONT_HERSHEY_SIMPLEX,
                                         0.55, (255,200,0), 2)
+
+
+
+                            # BEV용 타겟 저장
+                            self.detected_targets.append((Pw[0], Pw[1], cls_name))
+                            if len(self.detected_targets) > 10:
+                                self.detected_targets.pop(0)
+
 
                             # UDP publish
                             msg = f"{cls_name},{Pw[0]},{Pw[1]},{Pw[2]}"
