@@ -243,11 +243,11 @@ class ServingRobotController:
             cross = dir_vec[0]*dy - dir_vec[1]*dx
             if (dx, dy) == dir_vec:
                 rospy.loginfo("직진")
-                self.twist.linear.x = speed
+                self.twist.linear.x = -speed
 
             elif (-dx, -dy) == dir_vec:
                 rospy.loginfo("후진")
-                self.twist.linear.x = -speed
+                self.twist.linear.x = speed
 
             elif cross < 0:
                 rospy.loginfo("반시계 90° 후 직진")
