@@ -34,7 +34,7 @@ class ServingRobotController:
         self.cmd_vel_pub = rospy.Publisher('/mobile_base/commands/velocity', Twist, queue_size=1)
         self.current_point_sub = rospy.Subscriber('/current_point', Point, self.current_point_callback)
         self.target_point_sub  = rospy.Subscriber('/target_point',  Point, self.target_point_callback)
-        rospy.Subscriber('/odom', Odometry, self.odom_callback)  # ✅ 오도메트리 구독(누적보정 핵심)
+        rospy.Subscriber('/odom', Odometry, self.odom_callback)  # 오도메트리 구독(누적보정 핵심)
 
         # BEV 경로 전송용 UDP
         self.path_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
