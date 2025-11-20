@@ -72,15 +72,12 @@ class ServingRobotController:
 
     def target_point_callback(self, msg):
 
-        # 이미 타겟을 한 번 lock했다면 그대로 사용
         if self.target_locked:
             return
 
-        # 아직 lock되지 않았다면 아래 코드
-        rospy.loginfo(f"##타겟 좌표(LOCKED)##: x={msg.x:.2f}, y={msg.y:.2f}, z={msg.z:.2f}")
-
-        self.locked_target_position = [msg.x, msg.y]  # 고정된 좌표 저장
-        self.target_position = self.locked_target_position  # 컨트롤러에서 사용할 좌표
+        rospy.loginfo(f"타겟 좌표: x={msg.x:.2f}, y={msg.y:.2f}, z={msg.z:.2f}")
+        self.locked_target_position = [msg.x, msg.y]  
+        self.target_position = self.locked_target_position  
         self.target_found = True
         self.target_locked = True   
 
@@ -289,6 +286,12 @@ class ServingRobotController:
                     rospy.loginfo(f"타겟 {dist:.2f}m → 정지")
                     self.stop_robot()
                     rospy.sleep(0.5)
+
+                    self.target_locked = False
+                    self.locked_target_position = None
+
+
+
                     self.state = "SEARCH"
                     self.target_found = False
                     return
