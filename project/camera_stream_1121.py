@@ -51,9 +51,6 @@ class RealSenseLocalizationStreamer:
         depth_sensor = self.profile.get_device().first_depth_sensor()
         self.depth_scale = depth_sensor.get_depth_scale()
         self.align = rs.align(rs.stream.color)
-        
-        self.path_frozen = False
-        self.current_path = None
 
         # ---------------------------------------
         # Floor Marker Map (Top-Down)
@@ -79,7 +76,7 @@ class RealSenseLocalizationStreamer:
             
         }
 
-        self.virtual_obstacles = [(0,1), (2, 0), (1, 3)]
+        self.virtual_obstacles = [(6,3), (10, 5), (1, 3)]
 
         # ---------------------------------------
         # ArUco detector
@@ -190,12 +187,12 @@ class RealSenseLocalizationStreamer:
         map_img = np.ones((self.map_height, self.map_width, 3), dtype=np.uint8) * 240
         
         # Draw grid
-        for i in range(0, 8):
-            px, py = self._world_to_map(i, 0)
-            cv2.line(map_img, (px, 0), (px, self.map_height), (200, 200, 200), 1)
-        for j in range(0, 5):
-            px, py = self._world_to_map(0, j)
-            cv2.line(map_img, (0, py), (self.map_width, py), (200, 200, 200), 1)
+        for i in range(0, 25):
+            px, py = self._world_to_map(i * 0.5, 0)
+            cv2.line(map_img, (px, 0), (px, self.map_height), (220, 220, 220), 1)
+        for j in range(0, 13):
+            px, py = self._world_to_map(0, j * 0.5)
+            cv2.line(map_img, (0, py), (self.map_width, py), (220, 220, 220), 1)
         
         # Draw ArUco marker positions
         for marker_id, pos in self.marker_world_pos.items():
@@ -258,18 +255,15 @@ class RealSenseLocalizationStreamer:
         # ------ Draw A* path ----------
         if hasattr(self, 'astar_path') and self.astar_path:
             pts = []
-            cell = 0.5
-            half = cell / 2
-            
-            for (gx, gy) in self.current_path:
-                wx = gx * cell + half
-                wy = gy * cell + half
+            for (gx, gy) in self.astar_path:
+                wx = gx * 0.5 + 0.25
+                wy = gy * 0.5 + 0.25
                 px, py = self._world_to_map(wx, wy)
                 pts.append((px, py))
-                
+
             if len(pts) > 1:
-                pts = np.array(pts, np.int32)
-                cv2.polylines(map_img, [pts], False, (0, 255, 255), 2)
+                pts = np.array(pts, dtype=np.int32)
+                cv2.polylines(map_img, [pts], False, (0,125,125), 2)
         
         return map_img
 
@@ -414,9 +408,9 @@ class RealSenseLocalizationStreamer:
                                         f"Yaw={ang[2]:.1f} deg",
                                         (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
 
-                            # UDP publish
-                            msg = f"{stable[0]},{stable[1]},{stable[2]},{ang[0]},{ang[1]},{ang[2]}"
-                            self.sock.sendto(msg.encode(), self.server_addr)
+                            # # UDP publish
+                            # msg = f"{stable[0]},{stable[1]},{stable[2]},{ang[0]},{ang[1]},{ang[2]}"
+                            # self.sock.sendto(msg.encode(), self.server_addr)
 
                             if self.publish_point:
                                 self.publish_point(xy_angle,"current")
@@ -462,17 +456,17 @@ class RealSenseLocalizationStreamer:
                             Zc = d_m
                             Pc = np.array([Xc,Yc,Zc])
 
-                            # yaw offset (카메라 yaw 보정이 정말 필요하면 유지)
-                            da = math.radians(self.offset)
-                            Rz = np.array([
-                                [math.cos(da), -math.sin(da), 0],
-                                [math.sin(da),  math.cos(da), 0],
-                                [0,0,1]
-                            ])
-                            Pc_rot = Rz @ Pc
+                            # # yaw offset (카메라 yaw 보정이 정말 필요하면 유지)
+                            # da = math.radians(self.offset)
+                            # Rz = np.array([
+                            #     [math.cos(da), -math.sin(da), 0],
+                            #     [math.sin(da),  math.cos(da), 0],
+                            #     [0,0,1]
+                            # ])
+                            # Pc_rot = Rz @ Pc
 
                             # ---- 올바른 world 변환: Xw = C + Rᵀ * Pc ----
-                            Pw = self.last_cam_world + self.last_R_world.T @ Pc_rot
+                            Pw = self.last_cam_world + self.last_R_world.T @ Pc
 
                             # Target world 좌표 화면 출력
                             cv2.putText(color,
@@ -485,24 +479,18 @@ class RealSenseLocalizationStreamer:
                                 self.locked_target = (Pw[0], Pw[1], cls_name)
 
                             # A* 호출 및 경로 전달
-                            if not self.path_frozen:
-                                self.locked_target = (Pw[0], Pw[1], cls_name)
-                                start = (self.last_cam_world[0], self.last_cam_world[1])
-                                goal = (Pw[0], Pw[1])
-                                
-                                start_g = astar.discretize(start)
-                                goal_g = astar.discretize(goal)
-                                
-                                grid = astar.create_grid([], (24, 12))
-                                path = astar.astar(grid, start_g, goal_g)
-                                
-                                if path:
-                                    self.current_path = path
-                                    self.path_frozen = True
+                            target_world = (Pw[0], Pw[1])
+                            cam_world = (self.last_cam_world[0], self.last_cam_world[1])
+                            grid = astar.create_grid([], (24,12))
 
-                            # UDP publish
-                            msg = f"{cls_name},{Pw[0]},{Pw[1]},{Pw[2]}"
-                            self.target_sock.sendto(msg.encode(), self.target_addr)
+                            start = astar.discretize(cam_world)
+                            goal = astar.discretize(target_world)
+
+                            path = astar.astar(grid, start, goal)
+
+                            if path is not None:
+                                self.astar_path = path
+
 
                             if self.publish_point:
                                 self.publish_point(Pw,"target")
