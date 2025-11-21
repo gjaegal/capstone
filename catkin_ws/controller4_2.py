@@ -290,8 +290,6 @@ class ServingRobotController:
                     self.target_locked = False
                     self.locked_target_position = None
 
-
-
                     self.state = "SEARCH"
                     self.target_found = False
                     return
