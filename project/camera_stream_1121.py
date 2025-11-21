@@ -37,6 +37,7 @@ class RealSenseLocalizationStreamer:
         self.publish_point = publish_point
 
         rospy.Subscriber("/current_yaw_deg", Float32, self.yaw_callback)
+        rospy.Subcriber("/target_reached", Bool, self.on_target_reached)
         self.offset = 0.0
 
         # ---------------------------------------
@@ -118,7 +119,8 @@ class RealSenseLocalizationStreamer:
         self.map_origin_x = 50  # offset from left edge
         self.map_origin_y = 550  # offset from bottom edge
 
-
+        self.path_frozen = False
+        self.current_path = None
 
 
     # =====================================================
@@ -173,6 +175,12 @@ class RealSenseLocalizationStreamer:
             z = 0
         return np.array([x,y,z])
     
+    def on_target_reached(self, msg):
+        if msg.data:
+            self.path_frozen = False
+            self.current_path = None
+            self.locked_target = None
+    
 
     # --------------------- Bird's Eye View Visualization ---------------------
     def _world_to_map(self, x, y):
@@ -220,21 +228,6 @@ class RealSenseLocalizationStreamer:
                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
         cv2.putText(map_img, f"Cam Yaw: {cam_yaw:.1f}˚",
                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-        
-        # Draw legend
-        # cv2.putText(map_img, "Legend:", (10, self.map_height - 80),
-        #            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
-        # cv2.circle(map_img, (20, self.map_height - 55), 5, (100, 100, 255), -1)
-        # cv2.putText(map_img, "Markers", (35, self.map_height - 50),
-        #            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
-        # cv2.circle(map_img, (20, self.map_height - 30), 8, (0, 255, 0), -1)
-        # cv2.putText(map_img, "Camera", (35, self.map_height - 25),
-        #            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
-        # cv2.arrowedLine(map_img, (15, self.map_height - 10), (30, self.map_height - 10),
-        #                (0, 0, 255), 2, tipLength=0.4)
-        # cv2.putText(map_img, "Direction", (35, self.map_height - 5),
-        #            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
-
 
         # ------ Draw locked target (only one) and obstacles------
         if self.locked_target is not None:
@@ -251,20 +244,22 @@ class RealSenseLocalizationStreamer:
             cv2.rectangle(map_img, (px-6, py-6), (px + 6, py + 6), (0, 100, 255), -1)
             cv2.putText(map_img, "OBS", (px + 8, py), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 100, 255), 1) 
 
-            
-        # ------ Draw A* path ----------
-        if hasattr(self, 'astar_path') and self.astar_path:
+        # ----- Draw Frozen A* Path -----
+        if self.path_frozen and self.current_path is not None:
             pts = []
-            for (gx, gy) in self.astar_path:
-                wx = gx * 0.5 + 0.25
-                wy = gy * 0.5 + 0.25
+            cell = 0.5
+            half = cell / 2
+
+            for (gx, gy) in self.current_path:
+                wx = gx * cell + half
+                wy = gy * cell + half
                 px, py = self._world_to_map(wx, wy)
                 pts.append((px, py))
 
             if len(pts) > 1:
-                pts = np.array(pts, dtype=np.int32)
-                cv2.polylines(map_img, [pts], False, (0,125,125), 2)
-        
+                pts = np.array(pts, np.int32)
+                cv2.polylines(map_img, [pts], False, (0,255,255), 2)
+
         return map_img
 
 
@@ -475,21 +470,21 @@ class RealSenseLocalizationStreamer:
                                         cv2.FONT_HERSHEY_SIMPLEX,
                                         0.55, (255,200,0), 2)
                             # BEV용 타겟 저장
-                            if self.locked_target is None:
+                            if not self.path_frozen:
                                 self.locked_target = (Pw[0], Pw[1], cls_name)
-
-                            # A* 호출 및 경로 전달
-                            target_world = (Pw[0], Pw[1])
-                            cam_world = (self.last_cam_world[0], self.last_cam_world[1])
-                            grid = astar.create_grid([], (24,12))
-
-                            start = astar.discretize(cam_world)
-                            goal = astar.discretize(target_world)
-
-                            path = astar.astar(grid, start, goal)
-
-                            if path is not None:
-                                self.astar_path = path
+                                
+                                start = (self.last_cam_world[0], self.last_cam_world[1])
+                                goal = (Pw[0], Pw[1])
+                                
+                                start_g = astar.discretize(start)
+                                goal_g = astar.discretize(goal)
+                                
+                                grid = astar.create_grid([], (24, 12))
+                                path = astar.astar(grid, start_g, goal_g)
+                                
+                                if path:
+                                    self.current_path = path
+                                    self.path_frozen = True
 
 
                             if self.publish_point:
