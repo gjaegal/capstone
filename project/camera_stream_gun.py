@@ -273,9 +273,9 @@ class RealSenseLocalizationStreamer:
             half = cell / 2
             
             for (gx, gy) in self.path_points:
-                wx = gx * cell + half
-                wy = gy * cell + half
-                px, py = self._world_to_map(wx, wy)
+                # wx = gx * cell + half
+                # wy = gy * cell + half
+                px, py = self._world_to_map(gx, gy)
                 pts.append((px, py))
                 
             if len(pts) > 1:
