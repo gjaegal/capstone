@@ -26,8 +26,7 @@ class RealSenseLocalizationStreamer:
                  yolo_pose_weights='yolov8n-pose.pt',
                  tracker_max_age=5,
                  show_windows=True,
-                 publish_point=None
-                 ):
+                 publish_point=None):
 
         # YOLO models
         self.det_model = YOLO(yolo_det_weights)
@@ -40,12 +39,6 @@ class RealSenseLocalizationStreamer:
         rospy.Subscriber("/current_yaw_deg", Float32, self.yaw_callback)
         rospy.Subscriber("/target_reached", Bool, self.on_target_reached)
         self.offset = 0.0
-
-        # --- ODOM 위치 구독 ---
-        self.odom_x = 0.0
-        self.odom_y = 0.0
-        rospy.Subscriber("/odom_x", Float32, self.odom_x_cb)
-        rospy.Subscriber("/odom_y", Float32, self.odom_y_cb)
 
         # ---------------------------------------
         # RealSense initialization
@@ -136,12 +129,6 @@ class RealSenseLocalizationStreamer:
 
     def yaw_callback(self, msg):
         self.offset = msg.data
-
-    def odom_x_cb(self, msg):
-        self.odom_x = msg.data
-
-    def odom_y_cb(self, msg):
-        self.odom_y = msg.data
 
     def _publish_cb(self, event):
         if self.current_position and self.publish_point:
@@ -463,6 +450,7 @@ class RealSenseLocalizationStreamer:
                             Yc = (cy-cy0)*d_m/fy
                             Zc = d_m
                             Pc = np.array([Xc,Yc,Zc])
+                            Pc[1] = -Pc[1]
 
                             # # yaw offset (카메라 yaw 보정이 정말 필요하면 유지)
                             # da = math.radians(self.offset)
@@ -473,26 +461,8 @@ class RealSenseLocalizationStreamer:
                             # ])
                             # Pc_rot = Rz @ Pc
 
-
-
-
-                            # ---- 오도메트리 yaw 사용해 world 좌표 계산 ----
-
-                            theta = math.radians(self.offset)   # odom yaw(deg → rad)
-                            # RealSense 좌표계: Z=앞, X=좌
-                            Pc_robot = np.array([Pc[2], Pc[0]])   # (forward, left)
-                            # 로봇 yaw 회전 적용
-                            R = np.array([
-                                [math.cos(theta), -math.sin(theta)],
-                                [math.sin(theta),  math.cos(theta)]
-                            ])
-                            # 최종 world 좌표
-                            Pw_xy = np.array([self.odom_x, self.odom_y]) + R @ Pc_robot
-
-                            Pw = np.array([Pw_xy[0], Pw_xy[1], 0.0])
-
-
-
+                            # ---- 올바른 world 변환: Xw = C + Rᵀ * Pc ----
+                            Pw = self.last_cam_world + self.last_R_world.T @ Pc
 
                             # Target world 좌표 화면 출력
                             cv2.putText(color,
@@ -504,8 +474,7 @@ class RealSenseLocalizationStreamer:
                             if not self.path_frozen:
                                 self.locked_target = (Pw[0], Pw[1], cls_name)
                                 
-                                start = (self.odom_x, self.odom_y)
-
+                                start = (self.last_cam_world[0], self.last_cam_world[1])
                                 goal = (Pw[0], Pw[1])
                                 
                                 start_g = astar.discretize(start)
