@@ -115,11 +115,11 @@ class ServingRobotController:
 
     def rotate_right(self):
         '''시계 90도 회전'''
-        self._rotate(angle_deg=90.0, angular_speed=0.4)
+        self._rotate(angle_deg=90.0, angular_speed=0.5)
 
     def rotate_left(self):
         '''반시계 90도 회전'''
-        self._rotate(angle_deg=-90.0, angular_speed=0.4)
+        self._rotate(angle_deg=-90.0, angular_speed=0.5)
 
     def rotate_back(self):
         " 시계 180도 회전"
