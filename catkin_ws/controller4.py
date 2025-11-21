@@ -112,11 +112,11 @@ class ServingRobotController:
 
     def rotate_right(self):
         '''시계 90도 회전'''
-        self._rotate(angle_deg=90.0, angular_speed=0.7)
+        self._rotate(angle_deg=90.0, angular_speed=0.4)
 
     def rotate_left(self):
         '''반시계 90도 회전'''
-        self._rotate(angle_deg=-90.0, angular_speed=0.7)
+        self._rotate(angle_deg=-90.0, angular_speed=0.4)
 
     def rotate_back(self):
         " 시계 180도 회전"
@@ -178,7 +178,7 @@ class ServingRobotController:
         goal  = discretize(self.target_position)
         rospy.loginfo(f"그리드: start={start}, goal={goal}")
 
-        obstacles = [(0, 1), (2, 0), (1, 3)]  # TODO: 실제 장애물 연동
+        obstacles = [(6, 3), (10, 5), (1, 3)]  # TODO: 실제 장애물 연동
         grid = create_grid(obstacles, grid_size=(24, 12))
 
         path = astar(grid, start, goal)
@@ -203,10 +203,10 @@ class ServingRobotController:
             cross = dir_vec[0]*dy - dir_vec[1]*dx
             if [dx, dy] == dir_vec:
                 rospy.loginfo("직진")
-            elif cross > 0:
+            elif cross < 0:
                 rospy.loginfo("반시계 90° 후 직진")
                 self.rotate_left()
-            elif cross < 0:
+            elif cross > 0:
                 rospy.loginfo("시계 90° 후 직진")
                 self.rotate_right()
             else:
