@@ -51,6 +51,9 @@ class RealSenseLocalizationStreamer:
         depth_sensor = self.profile.get_device().first_depth_sensor()
         self.depth_scale = depth_sensor.get_depth_scale()
         self.align = rs.align(rs.stream.color)
+        
+        self.path_frozen = False
+        self.current_path = None
 
         # ---------------------------------------
         # Floor Marker Map (Top-Down)
@@ -255,15 +258,18 @@ class RealSenseLocalizationStreamer:
         # ------ Draw A* path ----------
         if hasattr(self, 'astar_path') and self.astar_path:
             pts = []
-            for (gx, gy) in self.astar_path:
-                wx = gx * 0.5
-                wy = gy * 0.5
+            cell = 0.5
+            half = cell / 2
+            
+            for (gx, gy) in self.current_path:
+                wx = gx * cell + half
+                wy = gy * cell + half
                 px, py = self._world_to_map(wx, wy)
                 pts.append((px, py))
-
+                
             if len(pts) > 1:
-                pts = np.array(pts, dtype=np.int32)
-                cv2.polylines(map_img, [pts], False, (0,255,255), 2)
+                pts = np.array(pts, np.int32)
+                cv2.polylines(map_img, [pts], False, (0, 255, 255), 2)
         
         return map_img
 
@@ -479,17 +485,20 @@ class RealSenseLocalizationStreamer:
                                 self.locked_target = (Pw[0], Pw[1], cls_name)
 
                             # A* 호출 및 경로 전달
-                            target_world = (Pw[0], Pw[1])
-                            cam_world = (self.last_cam_world[0], self.last_cam_world[1])
-                            grid = astar.create_grid([], (24,12))
-
-                            start = astar.discretize(cam_world)
-                            goal = astar.discretize(target_world)
-
-                            path = astar.astar(grid, start, goal)
-
-                            if path is not None:
-                                self.astar_path = path
+                            if not self.path_frozen:
+                                self.locked_target = (Pw[0], Pw[1], cls_name)
+                                start = (self.last_cam_world[0], self.last_cam_world[1])
+                                goal = (Pw[0], Pw[1])
+                                
+                                start_g = astar.discretize(start)
+                                goal_g = astar.discretize(goal)
+                                
+                                grid = astar.create_grid([], (24, 12))
+                                path = astar.astar(grid, start_g, goal_g)
+                                
+                                if path:
+                                    self.current_path = path
+                                    self.path_frozen = True
 
                             # UDP publish
                             msg = f"{cls_name},{Pw[0]},{Pw[1]},{Pw[2]}"
