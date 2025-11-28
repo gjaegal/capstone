@@ -450,7 +450,6 @@ class RealSenseLocalizationStreamer:
                             Yc = (cy-cy0)*d_m/fy
                             Zc = d_m
                             Pc = np.array([Xc,Yc,Zc])
-                            Pc[1] = -Pc[1]
 
                             # # yaw offset (카메라 yaw 보정이 정말 필요하면 유지)
                             # da = math.radians(self.offset)
@@ -462,7 +461,7 @@ class RealSenseLocalizationStreamer:
                             # Pc_rot = Rz @ Pc
 
                             # ---- 올바른 world 변환: Xw = C + Rᵀ * Pc ----
-                            Pw = self.last_cam_world + self.last_R_world.T @ Pc
+                            Pw = self.last_cam_world + self.last_R_world @ Pc
 
                             # Target world 좌표 화면 출력
                             cv2.putText(color,
