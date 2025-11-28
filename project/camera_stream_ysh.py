@@ -111,6 +111,8 @@ class RealSenseLocalizationStreamer:
         self.publish_timer = rospy.Timer(rospy.Duration(1.5), self._publish_cb)
         self.detected_targets = []
         self.locked_target = None
+        self.max_deviation = 0.5 # 0.5m이상 떨어지면 outlier로 간주
+        self.target_avg_flag = False
 
          # Bird's Eye View parameters
         self.map_width = 800
@@ -122,6 +124,7 @@ class RealSenseLocalizationStreamer:
         self.path_frozen = False
         self.current_path = None
 
+        
 
     # =====================================================
     # Utilities
@@ -462,6 +465,19 @@ class RealSenseLocalizationStreamer:
 
                             # ---- 올바른 world 변환: Xw = C + Rᵀ * Pc ----
                             Pw = self.last_cam_world + self.last_R_world.T @ Pc
+                            # outlier filtering and accumulate
+                            Pw_xy = np.array([Pw[0], Pw[1]])
+                            
+                            if len(self.detected_targets) == 0:
+                                self.detected_targets.append(Pw_xy)
+                            else:
+                                mean_xy = np.mean(self.detected_targets, axis = 0)
+                                dist = np.linalg.norm(Pw_xy - mean_xy)
+
+                                if dist < self.max_deviation:
+                                    self.detected_targets.append(Pw_xy)
+                                else:
+                                    pass
 
                             # Target world 좌표 화면 출력
                             cv2.putText(color,
@@ -470,22 +486,28 @@ class RealSenseLocalizationStreamer:
                                         cv2.FONT_HERSHEY_SIMPLEX,
                                         0.55, (255,200,0), 2)
                             # BEV용 타겟 저장
-                            if not self.path_frozen:
-                                self.locked_target = (Pw[0], Pw[1], cls_name)
-                                
+                            # CREATE FINAL TARGET USING AVERAGE
+                            if not self.path_frozen and len(self.detected_targets) > 0:
+
+                                # 평균 좌표 계산
+                                avg_xy = np.mean(self.detected_targets, axis=0)
+                                tx, ty = avg_xy[0], avg_xy[1]
+                                self.locked_target = (tx, ty, cls_name)
+
+                                # 현재 카메라 위치
                                 start = (self.last_cam_world[0], self.last_cam_world[1])
-                                goal = (Pw[0], Pw[1])
-                                
+                                goal  = (tx, ty)
+
                                 start_g = astar.discretize(start)
-                                goal_g = astar.discretize(goal)
-                                
+                                goal_g  = astar.discretize(goal)
+
                                 grid = astar.create_grid([], (24, 12))
                                 path = astar.astar(grid, start_g, goal_g)
-                                
+
                                 if path:
                                     self.current_path = path
                                     self.path_frozen = True
-
+                                    self.detected_targets = []   # 저장 버퍼 초기화
 
                             if self.publish_point:
                                 self.publish_point(Pw,"target")
