@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 
 import rospy
@@ -8,9 +7,8 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool
 import tf
 from astar import astar, create_grid, discretize
-import socket
 
-# ---- 간단한 2D 벡터/회전 유틸 ----
+# ---- 간단한 2D 벡터/회전 유틸 (필요 시 확장용) ----
 def rot2d(theta):
     c, s = math.cos(theta), math.sin(theta)
     return ((c, -s), (s, c))
@@ -29,104 +27,154 @@ def vec_sub(a, b):
 class ServingRobotController:
     def __init__(self):
         rospy.init_node('serving_robot_controller')
-        
+
         # 퍼블리셔/구독자
         self.cmd_vel_pub = rospy.Publisher('/mobile_base/commands/velocity', Twist, queue_size=1)
-        self.current_point_sub = rospy.Subscriber('/current_point', Point, self.current_point_callback)
-        self.target_point_sub  = rospy.Subscriber('/target_point',  Point, self.target_point_callback)
+        rospy.Subscriber('/current_point', Point, self.current_point_callback)
+        rospy.Subscriber('/target_point',  Point, self.target_point_callback)
         rospy.Subscriber('/odom', Odometry, self.odom_callback)
-        self.reached_pub = rospy.Publisher("/target_reached", Bool, queue_size = 1)
+        self.reached_pub = rospy.Publisher("/target_reached", Bool, queue_size=1)
 
         # 상태/좌표
-        self.state = "SEARCH"
+        self.state = "SEARCH"           # SEARCH → APPROACH → WAIT
         self.target_found = False
         self.current_position = [0.0, 0.0]
-        self.current_yaw = 0.0
+        self.current_yaw = 0.0          # rad
         self.target_position = [0.5, 0.5]
-        self.current_dir = [1, 0]
+        self.current_dir = [1, 0]       # 격자 기준 진행 방향
 
-        # 오도메트리 누적용
+        # 오도메트리 누적용 (원하면 여기에 쌓아서 보정 사용 가능)
         self.last_odom_pos = None
         self.last_odom_yaw = None
 
-        # 탐색 회전 방향 토글
-        self.search_initialized = False
+        # 탐색 회전 방향 토글 (좌 ↔ 우)
         self.search_left = True
+
+        # WAIT 모드 파라미터
+        self.wait_after_approach = 10.0  # 목표 도달 후 대기 시간(초)
 
         self.twist = Twist()
         rospy.loginfo("서빙 로봇 컨트롤러 시작 - YOLO+RealSense 모드")
 
+        self.first_search_rotation = True
 
     # ----------------------------- 콜백 -----------------------------
 
     def target_point_callback(self, msg):
+        # 새로운 타겟 들어왔을 때만 세팅
         if not self.target_found:
             rospy.loginfo(f"##타겟 좌표##: x={msg.x:.2f}, y={msg.y:.2f}, z={msg.z:.2f}")
             self.target_position = [msg.x, msg.y]
             self.target_found = True
 
     def current_point_callback(self, msg):
-        if self.current_position != [msg.x, msg.y]:
-            # rospy.loginfo(f"현재 좌표(vision): x={msg.x:.2f}, y={msg.y:.2f}, yaw(degree)={msg.z:.2f}")
-            self.current_position = [msg.x, msg.y]
+        # vision 기반 현재 좌표
+        self.current_position = [msg.x, msg.y]
         self.current_dir = self.yaw_to_dir(msg.z)
 
     def odom_callback(self, msg):
-        # 오도메트리 기반 누적 보정
         p = msg.pose.pose.position
         q = msg.pose.pose.orientation
         _, _, yaw = tf.transformations.euler_from_quaternion([q.x, q.y, q.z, q.w])
         odom_now = (p.x, p.y)
+        self.current_yaw = yaw
 
         if self.last_odom_pos is None:
             self.last_odom_pos = odom_now
             self.last_odom_yaw = yaw
-            return
 
-    # ----------------------------- 회전(오도메트리 보정 포함) -----------------------------
+    # ----------------------------- 속도 램핑 -----------------------------
 
-    def _rotate(self, angle_deg, angular_speed):
+    def ramp_speed(self, target_linear=0.0, target_angular=0.0,
+                   step_linear=0.015, step_angular=0.02, rate_hz=30):
         """
-        오도메트리 기반 범용 회전
-        - 회전 완료 후에만 종료
+        선속도/각속도를 부드럽게 목표치까지 증가/감소시키는 함수
+        - 현재 self.twist 기준으로 target까지 선형 interpolation
+        - 호출이 끝날 때까지 blocking
         """
-        start_yaw = self.get_current_yaw()
-        target_yaw = self._normalize_angle(start_yaw + math.radians(angle_deg))
-        direction = 1.0 if angle_deg >= 0 else -1.0
+        rate = rospy.Rate(rate_hz)
 
-        rospy.loginfo(f"[ROTATE] target={angle_deg}°, speed={angular_speed}rad/s")
+        current_linear = self.twist.linear.x
+        current_angular = self.twist.angular.z
 
-        rate = rospy.Rate(30)
         while not rospy.is_shutdown():
-            current_yaw = self.get_current_yaw()
-            remaining = self._angle_diff(target_yaw, current_yaw)
+            dl = target_linear - current_linear
+            da = target_angular - current_angular
 
-            if abs(remaining) < math.radians(1.0):  # 오차 ±1°
+            if abs(dl) < 0.01 and abs(da) < 0.01:
                 break
 
-            self.twist.linear.x = 0.0
-            self.twist.angular.z = direction * abs(angular_speed)
+            # 선속도 업데이트
+            if dl > 0:
+                current_linear += min(step_linear, dl)
+            else:
+                current_linear += max(-step_linear, dl)
+
+            # 각속도 업데이트
+            if da > 0:
+                current_angular += min(step_angular, da)
+            else:
+                current_angular += max(-step_angular, da)
+
+            self.twist.linear.x = current_linear
+            self.twist.angular.z = current_angular
             self.cmd_vel_pub.publish(self.twist)
             rate.sleep()
 
+        # 최종 보정
+        self.twist.linear.x = target_linear
+        self.twist.angular.z = target_angular
+        self.cmd_vel_pub.publish(self.twist)
+
+    # ----------------------------- 회전(오도메트리 기반) -----------------------------
+
+    def _rotate(self, angle_deg, angular_speed):
+        """
+        오도메트리 기반 회전
+        - angle_deg 만큼 회전 (양수: 시계, 음수: 반시계 or 그 반대 – 여기선 get_current_yaw 기준)
+        - angular_speed(rad/s)까지 ramp-up 후, yaw 오차 ±1° 이내가 되면 ramp-down
+        """
+
+        start_yaw = self.get_current_yaw()
+        target_yaw = self._normalize_angle(start_yaw + math.radians(angle_deg))
+        direction = 1.0 if angle_deg >= 0 else -1.0
+        target_w = direction * abs(angular_speed)
+
+        rospy.loginfo(f"[ROTATE] target={angle_deg}°, speed={target_w}")
+
+        # 즉시 회전 시작
+        self.twist.linear.x = 0.0
+        self.twist.angular.z = target_w
+        self.cmd_vel_pub.publish(self.twist)
+
+        rate = rospy.Rate(50)
+        while not rospy.is_shutdown():
+            current_yaw = self.get_current_yaw()
+            remaining = self._angle_diff(target_yaw, current_yaw)
+            if abs(remaining) < math.radians(1.0):
+                break
+            self.cmd_vel_pub.publish(self.twist)
+            rate.sleep()
+
+        # 즉시 회전 정지
         self.twist.angular.z = 0.0
         self.cmd_vel_pub.publish(self.twist)
-        rospy.loginfo(f"[ROTATE] rotation complete ({angle_deg}°)")
+
+        rospy.loginfo(f"[ROTATE] complete ({angle_deg} deg)")
 
     def rotate_right(self):
-        '''시계 90도 회전'''
+        """시계 90도 회전"""
         self._rotate(angle_deg=90.0, angular_speed=0.5)
 
     def rotate_left(self):
-        '''반시계 90도 회전'''
+        """반시계 90도 회전"""
         self._rotate(angle_deg=-90.0, angular_speed=0.5)
 
     def rotate_back(self):
-        " 시계 180도 회전"
+        """180도 회전"""
         self._rotate(angle_deg=180.0, angular_speed=0.7)
-    # ----------------------------- 유틸 -----------------------------
 
-    
+    # ----------------------------- 유틸 -----------------------------
 
     def get_current_yaw(self):
         try:
@@ -135,8 +183,8 @@ class ServingRobotController:
             _, _, yaw = tf.transformations.euler_from_quaternion([q.x, q.y, q.z, q.w])
             return yaw
         except Exception as e:
-            rospy.logwarn(f"[SEARCH] Failed to get yaw: {e}")
-            return 0.0
+            rospy.logwarn(f"[YAW] Failed to get yaw: {e}")
+            return self.current_yaw
 
     def _normalize_angle(self, angle):
         return math.atan2(math.sin(angle), math.cos(angle))
@@ -146,9 +194,9 @@ class ServingRobotController:
 
     def yaw_to_dir(self, yaw_deg):
         yaw_norm = yaw_deg % 360.0
-        if   45 <= yaw_norm < 135:   return [0, 1]    # 북
-        elif 135 <= yaw_norm < 225:  return [-1, 0]    # 서
-        elif 225 <= yaw_norm < 315:  return [0, -1]   # 남
+        if   45 <= yaw_norm < 135:   return [0, 1]   # 북
+        elif 135 <= yaw_norm < 225:  return [-1, 0]  # 서
+        elif 225 <= yaw_norm < 315:  return [0, -1]  # 남
         else:                        return [1, 0]   # 동
 
     def stop_robot(self):
@@ -156,129 +204,189 @@ class ServingRobotController:
         self.twist.angular.z = 0.0
         self.cmd_vel_pub.publish(self.twist)
 
-
-    # # ----------------------------- 탐색 모드 -----------------------------
-
-
-    # ----------------------------- 접근 모드 -----------------------------
+    # ----------------------------- APPROACH 모드 -----------------------------
 
     def approach_target(self):
+        """
+        A* 경로를 따라 타겟으로 접근.
+        성공 시 True, 실패/취소 시 False 반환.
+        """
         dir_vec = self.current_dir
-        rospy.loginfo(f"타겟 접근 시작: 현재={self.current_position}, 타겟={self.target_position}, 초기방향={dir_vec}")
+        rospy.loginfo(f"[APPROACH] 시작: 현재={self.current_position}, 타겟={self.target_position}, dir={dir_vec}")
 
-        # 초기 yaw (deg) → 진행방향
+        # 초기 yaw(deg)를 vision에서 가져올 수도 있지만, 여기선 그냥 current_dir로만 사용
         yaw_deg = rospy.get_param("/current_yaw_deg", 0.0)
-        self.current_yaw = math.radians(yaw_deg)  # 내부는 라디안 사용
-        rospy.loginfo(f"[YAW] 초기 YAW: {yaw_deg:.1f}°")
+        self.current_yaw = math.radians(yaw_deg)
+        rospy.loginfo(f"[YAW] 초기 yaw={yaw_deg:.1f} deg")
 
-        # 타겟 좌표 유효성
+        # 타겟 좌표 유효성 검사
         if self.target_position[0] < 0 or self.target_position[1] < 0:
-            rospy.logwarn(f"잘못된 목표: {self.target_position} → SEARCH 복귀")
-            return
+            rospy.logwarn(f"[APPROACH] 잘못된 목표: {self.target_position} → 실패")
+            return False
 
-        # A* 경로
+        # A* 경로 생성
         start = discretize(self.current_position)
         goal  = discretize(self.target_position)
-        rospy.loginfo(f"그리드: start={start}, goal={goal}")
+        rospy.loginfo(f"[A*] grid start={start}, goal={goal}")
 
-        obstacles = [(6, 3), (10, 5), (1, 3)]  # TODO: 실제 장애물 연동
+        # TODO: 실제 장애물 연동
+        obstacles = [(6, 3), (10, 5), (1, 3)]
         grid = create_grid(obstacles, grid_size=(24, 12))
 
         path = astar(grid, start, goal)
         if not path or len(path) < 2:
-            rospy.logwarn("경로 없음 → SEARCH 복귀")
-            return
+            rospy.logwarn("[A*] 경로 없음 → APPROACH 실패")
+            return False
 
-        rospy.loginfo(f"[A*] 전체 경로: {path}")
+        rospy.loginfo(f"[A*] 경로: {path}")
 
         # 이동 파라미터
-        speed        = 0.2
-        cell_size    = 0.5
-        move_time    = cell_size / speed
-        rotate_speed = 0.5
+        speed          = 0.2
+        cell_size      = 0.5
+        move_time      = cell_size / speed
+        dist_threshold = 0.1
 
         rate = rospy.Rate(20)
-        for i in range(1, len(path)):
-            current, next_p = path[i - 1], path[i]
-            rospy.loginfo(f"[PATH] {current} -> {next_p} 이동")
-            dx, dy = next_p[0] - current[0], next_p[1] - current[1]
 
+        for i in range(1, len(path)):
+            current, nxt = path[i-1], path[i]
+            rospy.loginfo(f"[PATH] {current} → {nxt}")
+
+            dx = nxt[0] - current[0]
+            dy = nxt[1] - current[1]
+
+            # 회전 방향 결정 (cross product)
             cross = dir_vec[0]*dy - dir_vec[1]*dx
             if [dx, dy] == dir_vec:
-                rospy.loginfo("직진")
+                rospy.loginfo("[DIR] 직진 유지")
             elif cross < 0:
-                rospy.loginfo("반시계 90° 후 직진")
+                rospy.loginfo("[DIR] 반시계 90°")
                 self.rotate_left()
             elif cross > 0:
-                rospy.loginfo("시계 90° 후 직진")
+                rospy.loginfo("[DIR] 시계 90°")
                 self.rotate_right()
             else:
-                rospy.loginfo("180° 회전 후 직진")
+                rospy.loginfo("[DIR] 180° 회전")
                 self.rotate_back()
 
-            # 진행방향 갱신
+            # 진행 방향 갱신
             dir_vec = [dx, dy]
             self.current_dir = [dx, dy]
 
-            # 한 셀 이동(이동 중 오도메트리로 self.current_position/ yaw 보정됨)
-            self.twist.linear.x = speed
-            self.twist.angular.z = 0.0
+            # 한 셀 전진 (부드러운 가속)
+            self.ramp_speed(target_linear=speed,
+                            target_angular=0.0,
+                            step_linear=0.02,
+                            step_angular=0.02)
 
-            start_time = rospy.Time.now().to_sec()
-            while rospy.Time.now().to_sec() - start_time < move_time:
-                # 근접 도달 판단(0.3 m)
-                dist = math.hypot(self.target_position[0]-self.current_position[0],
-                                  self.target_position[1]-self.current_position[1])
-                if dist <= 0.1:
-                    rospy.loginfo(f"타겟 {dist:.2f}m → 정지")
+            start_t = rospy.Time.now().to_sec()
+            while not rospy.is_shutdown():
+                elapsed = rospy.Time.now().to_sec() - start_t
+                if elapsed >= move_time:
+                    break
+
+                # 근접 도달 판단
+                dist = math.hypot(self.target_position[0] - self.current_position[0],
+                                  self.target_position[1] - self.current_position[1])
+                if dist <= dist_threshold:
+                    rospy.loginfo(f"[APPROACH] 타겟 {dist:.3f}m → 도달")
+                    # 부드러운 감속 + 도달 처리
+                    self.ramp_speed(target_linear=0.0,
+                                    target_angular=0.0,
+                                    step_linear=0.03,
+                                    step_angular=0.03)
                     self.reached_pub.publish(True)
-                    self.stop_robot()
+                    self.target_found = False
                     rospy.sleep(0.5)
-                    return
+                    return True
+
                 self.cmd_vel_pub.publish(self.twist)
                 rate.sleep()
-            
-            self.stop_robot()
+
+            # 셀 이동 종료 → 감속
+            self.ramp_speed(target_linear=0.0,
+                            target_angular=0.0,
+                            step_linear=0.03,
+                            step_angular=0.03)
             rospy.sleep(0.2)
-            self.current_position[0] += dir_vec[0] * 0.5
-            self.current_position[1] += dir_vec[1] * 0.5
-            ################### 한 셀 이동 완료 ####################
-            
 
-        rospy.loginfo("목표 도달 → SEARCH 복귀")
+            # 격자 기준 위치 업데이트 (rough)
+            self.current_position[0] += dir_vec[0] * cell_size
+            self.current_position[1] += dir_vec[1] * cell_size
+
+        # 여기까지 왔으면 path 끝까지 간 것 → 도달로 간주
+        rospy.loginfo("[APPROACH] 경로 끝까지 이동 → 타겟 도달 처리")
+        self.reached_pub.publish(True)
+        self.target_found = False
         self.stop_robot()
-        rospy.sleep(1.0)
+        rospy.sleep(0.5)
+        return True
 
+    # ----------------------------- WAIT 모드 -----------------------------
 
-    
+    def wait_mode(self):
+        rospy.loginfo(f"[WAIT] {self.wait_after_approach:.1f}s 대기...")
+        self.stop_robot()
+        rospy.sleep(self.wait_after_approach)
+        rospy.loginfo("[WAIT] 종료 → SEARCH 복귀")
 
-    # ----------------------------- 메인 루프 -----------------------------
+    # ----------------------------- 메인 루프 (상태머신) -----------------------------
 
     def run(self):
-        rospy.loginfo("탐색 대기 중...")
+        rospy.loginfo("[MAIN] 탐색 시작")
         rate = rospy.Rate(10)
-        while not rospy.is_shutdown():
-            # SEARCH MODE
-            self.state = "SEARCH"
-            if self.search_left:
-                self.rotate_left()
-                self.rotate_right()
-                self.search_left = False
-            else:
-                self.rotate_right()
-                self.rotate_left()
-                self.search_left = True
-            # self.search_left = not self.search_left
 
-            rate.sleep()
-            # 회전 동안 target을 찾았다면 APPROACH 모드로 전환
-            if self.target_found == True:
-                self.state = "APPROACH"
-                self.approach_target()
-                # 도착(혹은 error) 후 SEARCH 모드로 복귀
-                self.state= "SEARCH"
-                self.target_found = False
-            rate.sleep()
+        while not rospy.is_shutdown():
+
+            # -------- SEARCH MODE --------
+            if self.state == "SEARCH":
+                # 타겟 이미 발견 ⇒ 바로 APPROACH
+                if self.target_found:
+                    rospy.loginfo("[STATE] SEARCH→APPROACH (타겟 감지)")
+                    self.state = "APPROACH"
+                    continue
+
+                rospy.loginfo("[STATE] SEARCH - 회전하며 탐색중")
+                # --- 수정 후 SEARCH 회전 로직 ---
+                if self.first_search_rotation:
+                    rospy.loginfo("[SEARCH] 최초 실행 → 90도 회전")
+                    self.rotate_left()
+                    self.first_search_rotation = False
+                else:
+                    # 좌우 번갈아 180도씩 회전
+                    if not self.search_left:
+                        rospy.loginfo("[SEARCH] 180도 왼쪽 회전")
+                        self.rotate_left()
+                        self.rotate_left()
+                    else:
+                        rospy.loginfo("[SEARCH] 180도 오른쪽 회전")
+                        self.rotate_right()
+                        self.rotate_right()
+
+                    # 다음엔 반대 방향으로 회전
+                    self.search_left = not self.search_left
+                rate.sleep()
+                continue
+
+            # -------- APPROACH MODE --------
+            elif self.state == "APPROACH":
+                rospy.loginfo("[STATE] APPROACH")
+                success = self.approach_target()
+
+                if success:
+                    rospy.loginfo("[STATE] APPROACH 성공 → WAIT")
+                    self.state = "WAIT"
+                else:
+                    rospy.loginfo("[STATE] APPROACH 실패 → SEARCH")
+                    self.state = "SEARCH"
+                continue
+
+            # -------- WAIT MODE --------
+            elif self.state == "WAIT":
+                rospy.loginfo("[STATE] WAIT")
+                self.wait_mode()
+                self.state = "SEARCH"
+                continue
 
 
 if __name__ == '__main__':
