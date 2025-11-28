@@ -180,9 +180,16 @@ class RealSenseLocalizationStreamer:
     
     def on_target_reached(self, msg):
         if msg.data:
+
+            # ---- Reset all target/path related states ----
             self.path_frozen = False
             self.current_path = None
             self.locked_target = None
+            self.detected_targets = []     # AVG buffer 초기화
+            self.target_average_ready = False  # 혹시 추가 플래그 사용한다면
+        
+            rospy.loginfo("[BEV] Target reached → Clear path + target.")
+
     
 
     # --------------------- Bird's Eye View Visualization ---------------------
@@ -233,13 +240,50 @@ class RealSenseLocalizationStreamer:
                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
 
         # ------ Draw locked target (only one) and obstacles------
-        if self.locked_target is not None:
+        if not self.path_frozen and len(self.detected_targets) > 0:
+            avg_xy = np.mean(self.detected_targets, axis=0)
+            ax, ay = float(avg_xy[0]), float(avg_xy[1])
+            apx, apy = self._world_to_map(ax, ay)
+            cv2.circle(map_img, (apx, apy), 6, (0,0,255), -1)
+            cv2.putText(map_img, "AVG", (apx+10, apy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0,0,255), 2)
+
+
+        # (2) FINALIZED MODE: draw locked target + path
+        if self.path_frozen and self.locked_target is not None:
             tx, ty, tname = self.locked_target
             tp_x, tp_y = self._world_to_map(tx, ty)
             cv2.circle(map_img, (tp_x, tp_y), 8, (255,0,0), -1)
-            cv2.putText(map_img, f"Target: {tname}", (tp_x + 10, tp_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,30,0), 2)
+            cv2.putText(map_img, f"TGT:{tname}", (tp_x+10, tp_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0,0,0), 2)
+
+            # Draw finalized A* path
+            if self.current_path is not None:
+                pts = []
+                cell = 0.5
+                half = cell / 2
+                for (gx, gy) in self.current_path:
+                    wx = gx * cell + half
+                    wy = gy * cell + half
+                    px, py = self._world_to_map(wx, wy)
+                    pts.append((px, py))
+
+                if len(pts) > 1:
+                    pts = np.array(pts, np.int32)
+                    cv2.polylines(map_img, [pts], False, (0,125,125), 2)
+
             
+        # ----- Draw averaged target during search -----
+        if not self.path_frozen and len(self.detected_targets) > 0:
+            avg_xy = np.mean(self.detected_targets, axis=0)
+            ax, ay = float(avg_xy[0]), float(avg_xy[1])
+            apx, apy = self._world_to_map(ax, ay)
+
+            cv2.circle(map_img, (apx, apy), 6, (0,0,255), -1)
+            cv2.putText(map_img, "AVG", (apx+10, apy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0,0,255), 2)
+
+
         for (ox, oy) in self.virtual_obstacles:
             wx = ox * 0.5
             wy = oy * 0.5
@@ -307,6 +351,9 @@ class RealSenseLocalizationStreamer:
                         for i, mid_raw in enumerate(ids):
 
                             mid = int(mid_raw[0])
+                            if mid not in self.marker_world_pos:
+                                continue
+
                             c = corners[i]
                             rvec = rvecs[i]
                             tvec = tvecs[i]
@@ -318,6 +365,8 @@ class RealSenseLocalizationStreamer:
                             cx, cy = np.mean(c.reshape(4,2), axis=0, dtype=int)
 
                             # ===== World coord print =====
+                            if mid not in self.marker_world_pos:
+                                continue
                             wc = self.marker_world_pos[mid]
                             cv2.putText(color,
                                         f"ID:{mid}  Cam=({tvec[0][0]:.2f},{tvec[0][1]:.2f},{tvec[0][2]:.2f})",
@@ -491,7 +540,7 @@ class RealSenseLocalizationStreamer:
 
                                 # 평균 좌표 계산
                                 avg_xy = np.mean(self.detected_targets, axis=0)
-                                tx, ty = avg_xy[0], avg_xy[1]
+                                tx, ty = float(avg_xy[0]), float(avg_xy[1])
                                 self.locked_target = (tx, ty, cls_name)
 
                                 # 현재 카메라 위치
