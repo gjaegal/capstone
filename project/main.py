@@ -5,7 +5,7 @@ import rospy
 from camera_stream import RealSenseLocalizationStreamer
 from ros_bridge import TargetPublisherROS
 import multiprocessing
-import bird_eye_view   
+import bird_eye_view
 
 def on_detections_cb(dets):
     """
@@ -36,17 +36,16 @@ def main():
     target_pub = TargetPublisherROS(node_name='yolo_realsense_publisher', topic='/target')
 
     # bird_eye_view를 별도 프로세스로 실행
-    bev_process = multiprocessing.Process(target=bird_eye_view.main)
-    bev_process.start()
+    # bev_process = multiprocessing.Process(target=bird_eye_view.main)
+    # bev_process = multiprocessing.Process(target=BEV_test.main)
+    # bev_process.start()
 
     streamer = RealSenseLocalizationStreamer(
         yolo_det_weights='yolov8n.pt',
         yolo_pose_weights='yolov8n-pose.pt',
         tracker_max_age=5,
         show_windows=True,
-        on_detections=target_pub.on_detections,  # /target으로 퍼블리시
         publish_point=target_pub.publish_point,
-        on_poses=on_poses_cb                      # 필요 시 별도 토픽으로 확장
     )
     
     # streamer main loop
@@ -55,8 +54,8 @@ def main():
         streamer.run()
     except KeyboardInterrupt:
         pass
-    finally:
-        bev_process.terminate()   # 종료 시 bird_eye_view도 같이 종료
+    # finally:
+        # bev_process.terminate()   # 종료 시 bird_eye_view도 같이 종료
     
 if __name__ == "__main__":
     main()
