@@ -1,7 +1,7 @@
 import rospy
 from std_msgs.msg import Header
 from vision_msgs.msg import Detection2DArray, Detection2D, ObjectHypothesisWithPose
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PointStamped
 
 class TargetPublisherROS:
     """RealSenseYOLOStreamer의 on_detections 콜백을 받아 vision_msgs/Detection2DArray로 퍼블리시
@@ -25,7 +25,7 @@ class TargetPublisherROS:
         for cls_name, depth_m, (x1, y1, x2, y2), (cx, cy), conf in dets:
             det = Detection2D()
             hypo = ObjectHypothesisWithPose()
-            if cls_name == "mouse" :
+            if cls_name in ["chair", "remote", "mouse"]:
                 hypo.id = 1
             else:
                 hypo.id = 0
@@ -45,7 +45,7 @@ class TargetPublisherROS:
 
         self.pub.publish(msg)
     
-    def publish_point(self, P, location_type="current"):
+    def publish_point(self, P, location_type="current", yaw=None):
         """
         좌표 P: [x, y, z]
         location_type: "current" 로봇 위치, "target" 목표 위치
@@ -61,3 +61,6 @@ class TargetPublisherROS:
         if location_type=="target":
             self.target_pub.publish(point)
         
+        # 현재 방향: /current_yaw_deg 로 publish
+        if yaw is not None:
+            rospy.set_param("/current_yaw_deg", yaw)
