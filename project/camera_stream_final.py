@@ -6,16 +6,17 @@ import numpy as np
 import cv2
 from ultralytics import YOLO
 from deep_sort_realtime.deepsort_tracker import DeepSort
+import astar
 import math
 import socket
 import time
 import rospy
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Bool
 
 
 class RealSenseLocalizationStreamer:
 
-    TARGET_CLASSES = ['chair', 'mouse', 'remote']
+    TARGET_CLASSES = ['person']
     IGNORE_CLASSES = ['refrigerator','tv','laptop','kite','frisbee','airplane','bird','sports ball']
     MIN_CONF_DET = 0.40
     MAX_DEPTH_M = 10.0
@@ -36,6 +37,7 @@ class RealSenseLocalizationStreamer:
         self.publish_point = publish_point
 
         rospy.Subscriber("/current_yaw_deg", Float32, self.yaw_callback)
+        rospy.Subscriber("/target_reached", Bool, self.on_target_reached)
         self.offset = 0.0
 
         # ---------------------------------------
@@ -59,21 +61,23 @@ class RealSenseLocalizationStreamer:
 
         self.marker_world_pos = {
             0: np.array([0.0, 0.0, 0.0]),
-            1: np.array([2.0, 0.0, 0.0]),
-            2: np.array([4.0, 0.0, 0.0]),
-            3: np.array([6.0, 0.0, 0.0]),
+            1: np.array([1.0, 0.0, 0.0]),
+            2: np.array([2.0, 0.0, 0.0]),
+            3: np.array([3.0, 0.0, 0.0]),
 
-            4: np.array([0.0, 1.5, 0.0]),
-            5: np.array([2.0, 1.5, 0.0]),
-            6: np.array([4.0, 1.5, 0.0]),
-            7: np.array([6.0, 1.5, 0.0]),
+            4: np.array([0.0, 1.0, 0.0]),
+            5: np.array([1.0, 1.0, 0.0]),
+            6: np.array([2.0, 1.0, 0.0]),
+            7: np.array([3.0, 1.0, 0.0]),
 
-            8: np.array([0.0, 3.0, 0.0]),
-            9: np.array([2.0, 3.0, 0.0]),
-            10: np.array([4.0, 3.0, 0.0]),
-            11: np.array([6.0, 3.0, 0.0]),
+            8: np.array([0.0, 2.0, 0.0]),
+            9: np.array([1.0, 2.0, 0.0]),
+            10: np.array([2.0, 2.0, 0.0]),
+            11: np.array([3.0, 2.0, 0.0]),
             
         }
+
+        self.virtual_obstacles = [(6,3), (1, 1), (0, 1)]
 
         # ---------------------------------------
         # ArUco detector
@@ -107,8 +111,8 @@ class RealSenseLocalizationStreamer:
         self.publish_timer = rospy.Timer(rospy.Duration(1.5), self._publish_cb)
         self.detected_targets = []
         self.locked_target = None
-
-        
+        self.max_deviation = 0.5 # 0.5m이상 떨어지면 outlier로 간주
+        self.target_avg_flag = False
 
          # Bird's Eye View parameters
         self.map_width = 800
@@ -117,8 +121,10 @@ class RealSenseLocalizationStreamer:
         self.map_origin_x = 50  # offset from left edge
         self.map_origin_y = 550  # offset from bottom edge
 
+        self.path_frozen = False
+        self.current_path = None
 
-
+        
 
     # =====================================================
     # Utilities
@@ -172,6 +178,19 @@ class RealSenseLocalizationStreamer:
             z = 0
         return np.array([x,y,z])
     
+    def on_target_reached(self, msg):
+        if msg.data:
+
+            # ---- Reset all target/path related states ----
+            self.path_frozen = False
+            self.current_path = None
+            self.locked_target = None
+            self.detected_targets = []     # AVG buffer 초기화
+            self.target_average_ready = False  # 혹시 추가 플래그 사용한다면
+        
+            rospy.loginfo("[BEV] Target reached → Clear path + target.")
+
+    
 
     # --------------------- Bird's Eye View Visualization ---------------------
     def _world_to_map(self, x, y):
@@ -186,19 +205,19 @@ class RealSenseLocalizationStreamer:
         map_img = np.ones((self.map_height, self.map_width, 3), dtype=np.uint8) * 240
         
         # Draw grid
-        for i in range(0, 8):
-            px, py = self._world_to_map(i, 0)
-            cv2.line(map_img, (px, 0), (px, self.map_height), (200, 200, 200), 1)
-        for j in range(0, 5):
-            px, py = self._world_to_map(0, j)
-            cv2.line(map_img, (0, py), (self.map_width, py), (200, 200, 200), 1)
+        for i in range(0, 25):
+            px, py = self._world_to_map(i * 0.5, 0)
+            cv2.line(map_img, (px, 0), (px, self.map_height), (220, 220, 220), 1)
+        for j in range(0, 13):
+            px, py = self._world_to_map(0, j * 0.5)
+            cv2.line(map_img, (0, py), (self.map_width, py), (220, 220, 220), 1)
         
         # Draw ArUco marker positions
         for marker_id, pos in self.marker_world_pos.items():
             px, py = self._world_to_map(pos[0], pos[1])
-            cv2.circle(map_img, (px, py), 5, (100, 100, 255), -1)
-            cv2.putText(map_img, str(marker_id), (px + 8, py + 5),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (100, 100, 255), 1)
+            cv2.rectangle(map_img, (px-10, py-10, 20, 20), (0, 0, 0), -1)
+            cv2.putText(map_img, f"ID {marker_id}", (px + 12, py + 5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
         
         # Draw camera position
         cam_px, cam_py = self._world_to_map(cam_x, cam_y)
@@ -215,34 +234,79 @@ class RealSenseLocalizationStreamer:
                        (0, 0, 255), 3, tipLength=0.3)
         
         # Draw coordinate info
-        cv2.putText(map_img, f"Position: ({cam_x:.2f}, {cam_y:.2f})",
+        cv2.putText(map_img, f"Cam Position: ({cam_x:.2f}, {cam_y:.2f})",
                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-        cv2.putText(map_img, f"Yaw: {cam_yaw:.1f} deg",
+        cv2.putText(map_img, f"Cam Yaw: {cam_yaw:.1f}˚",
                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-        
-        # Draw legend
-        cv2.putText(map_img, "Legend:", (10, self.map_height - 80),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
-        cv2.circle(map_img, (20, self.map_height - 55), 5, (100, 100, 255), -1)
-        cv2.putText(map_img, "ArUco Markers", (35, self.map_height - 50),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
-        cv2.circle(map_img, (20, self.map_height - 30), 8, (0, 255, 0), -1)
-        cv2.putText(map_img, "Camera", (35, self.map_height - 25),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
-        cv2.arrowedLine(map_img, (15, self.map_height - 10), (30, self.map_height - 10),
-                       (0, 0, 255), 2, tipLength=0.4)
-        cv2.putText(map_img, "Direction", (35, self.map_height - 5),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+
+        # ------ Draw locked target (only one) and obstacles------
+        if not self.path_frozen and len(self.detected_targets) > 0:
+            avg_xy = np.mean(self.detected_targets, axis=0)
+            ax, ay = float(avg_xy[0]), float(avg_xy[1])
+            apx, apy = self._world_to_map(ax, ay)
+            cv2.circle(map_img, (apx, apy), 6, (0,0,255), -1)
+            cv2.putText(map_img, "AVG", (apx+10, apy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0,0,255), 2)
 
 
-        # ------ Draw locked target (only one) ------
-        if self.locked_target is not None:
+        # (2) FINALIZED MODE: draw locked target + path
+        if self.path_frozen and self.locked_target is not None:
             tx, ty, tname = self.locked_target
             tp_x, tp_y = self._world_to_map(tx, ty)
-            cv2.circle(map_img, (tp_x, tp_y), 8, (0,165,255), -1)
-            cv2.putText(map_img, tname, (tp_x + 10, tp_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,100,200), 1)
-        
+            cv2.circle(map_img, (tp_x, tp_y), 8, (255,0,0), -1)
+            cv2.putText(map_img, f"TGT:{tname}", (tp_x+10, tp_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0,0,0), 2)
+
+            # Draw finalized A* path
+            if self.current_path is not None:
+                pts = []
+                cell = 0.5
+                half = cell / 2
+                for (gx, gy) in self.current_path:
+                    wx = gx * cell + half
+                    wy = gy * cell + half
+                    px, py = self._world_to_map(wx, wy)
+                    pts.append((px, py))
+
+                if len(pts) > 1:
+                    pts = np.array(pts, np.int32)
+                    cv2.polylines(map_img, [pts], False, (0,125,125), 2)
+
+            
+        # ----- Draw averaged target during search -----
+        if not self.path_frozen and len(self.detected_targets) > 0:
+            avg_xy = np.mean(self.detected_targets, axis=0)
+            ax, ay = float(avg_xy[0]), float(avg_xy[1])
+            apx, apy = self._world_to_map(ax, ay)
+
+            cv2.circle(map_img, (apx, apy), 6, (0,0,255), -1)
+            cv2.putText(map_img, "AVG", (apx+10, apy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0,0,255), 2)
+
+
+        for (ox, oy) in self.virtual_obstacles:
+            wx = ox * 0.5
+            wy = oy * 0.5
+            px, py = self._world_to_map(wx, wy)
+            cv2.rectangle(map_img, (px-10, py-10), (px + 10, py + 10), (0, 100, 255), -1)
+            cv2.putText(map_img, "OBS", (px + 12, py), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 100, 255), 1) 
+
+        # ----- Draw Frozen A* Path -----
+        if self.path_frozen and self.current_path is not None:
+            pts = []
+            cell = 0.5
+            half = cell / 2
+
+            for (gx, gy) in self.current_path:
+                wx = gx * cell + half
+                wy = gy * cell + half
+                px, py = self._world_to_map(wx, wy)
+                pts.append((px, py))
+
+            if len(pts) > 1:
+                pts = np.array(pts, np.int32)
+                cv2.polylines(map_img, [pts], False, (0,125,125), 2)
+
         return map_img
 
 
@@ -287,6 +351,9 @@ class RealSenseLocalizationStreamer:
                         for i, mid_raw in enumerate(ids):
 
                             mid = int(mid_raw[0])
+                            if mid not in self.marker_world_pos:
+                                continue
+
                             c = corners[i]
                             rvec = rvecs[i]
                             tvec = tvecs[i]
@@ -298,6 +365,8 @@ class RealSenseLocalizationStreamer:
                             cx, cy = np.mean(c.reshape(4,2), axis=0, dtype=int)
 
                             # ===== World coord print =====
+                            if mid not in self.marker_world_pos:
+                                continue
                             wc = self.marker_world_pos[mid]
                             cv2.putText(color,
                                         f"ID:{mid}  Cam=({tvec[0][0]:.2f},{tvec[0][1]:.2f},{tvec[0][2]:.2f})",
@@ -386,9 +455,9 @@ class RealSenseLocalizationStreamer:
                                         f"Yaw={ang[2]:.1f} deg",
                                         (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
 
-                            # UDP publish
-                            msg = f"{stable[0]},{stable[1]},{stable[2]},{ang[0]},{ang[1]},{ang[2]}"
-                            self.sock.sendto(msg.encode(), self.server_addr)
+                            # # UDP publish
+                            # msg = f"{stable[0]},{stable[1]},{stable[2]},{ang[0]},{ang[1]},{ang[2]}"
+                            # self.sock.sendto(msg.encode(), self.server_addr)
 
                             if self.publish_point:
                                 self.publish_point(xy_angle,"current")
@@ -397,12 +466,10 @@ class RealSenseLocalizationStreamer:
                             self.last_t_world = stable
                             self.last_cam_world = stable
 
-
-                            
-
                             birdseye = self._create_birdseye_view(stable[0], stable[1], ang[2])
                             if self.show_windows:
                                 cv2.imshow("Bird's Eye View", birdseye)
+                                cv2.moveWindow("Bird's Eye View", 1400, 200)
 
                 # Target detection → world coordinates + Print
                 if hasattr(self, 'last_R_world') and hasattr(self, 'last_cam_world'):
@@ -422,6 +489,8 @@ class RealSenseLocalizationStreamer:
                             cx = (x1+x2)//2
                             cy = (y1+y2)//2
 
+                            cv2.rectangle(color, (x1, y1), (x2, y2), (0,255,0),2)
+
                             d_m = self._depth(depth_img, cx, cy)
                             if d_m is None or d_m > self.MAX_DEPTH_M:
                                 continue
@@ -434,17 +503,30 @@ class RealSenseLocalizationStreamer:
                             Zc = d_m
                             Pc = np.array([Xc,Yc,Zc])
 
-                            # yaw offset (카메라 yaw 보정이 정말 필요하면 유지)
-                            da = math.radians(self.offset)
-                            Rz = np.array([
-                                [math.cos(da), -math.sin(da), 0],
-                                [math.sin(da),  math.cos(da), 0],
-                                [0,0,1]
-                            ])
-                            Pc_rot = Rz @ Pc
+                            # # yaw offset (카메라 yaw 보정이 정말 필요하면 유지)
+                            # da = math.radians(self.offset)
+                            # Rz = np.array([
+                            #     [math.cos(da), -math.sin(da), 0],
+                            #     [math.sin(da),  math.cos(da), 0],
+                            #     [0,0,1]
+                            # ])
+                            # Pc_rot = Rz @ Pc
 
                             # ---- 올바른 world 변환: Xw = C + Rᵀ * Pc ----
-                            Pw = self.last_cam_world + self.last_R_world.T @ Pc_rot
+                            Pw = self.last_cam_world + self.last_R_world.T @ Pc
+                            # outlier filtering and accumulate
+                            Pw_xy = np.array([Pw[0], Pw[1]])
+                            
+                            if len(self.detected_targets) == 0:
+                                self.detected_targets.append(Pw_xy)
+                            else:
+                                mean_xy = np.mean(self.detected_targets, axis = 0)
+                                dist = np.linalg.norm(Pw_xy - mean_xy)
+
+                                if dist < self.max_deviation:
+                                    self.detected_targets.append(Pw_xy)
+                                else:
+                                    pass
 
                             # Target world 좌표 화면 출력
                             cv2.putText(color,
@@ -452,17 +534,29 @@ class RealSenseLocalizationStreamer:
                                         (x1, max(0, y1-20)),
                                         cv2.FONT_HERSHEY_SIMPLEX,
                                         0.55, (255,200,0), 2)
-
-
-
                             # BEV용 타겟 저장
-                            if self.locked_target is None:
-                                self.locked_target = (Pw[0], Pw[1], cls_name)
+                            # CREATE FINAL TARGET USING AVERAGE
+                            if not self.path_frozen and len(self.detected_targets) > 0:
 
+                                # 평균 좌표 계산
+                                avg_xy = np.mean(self.detected_targets, axis=0)
+                                tx, ty = float(avg_xy[0]), float(avg_xy[1])
+                                self.locked_target = (tx, ty, cls_name)
 
-                            # UDP publish
-                            msg = f"{cls_name},{Pw[0]},{Pw[1]},{Pw[2]}"
-                            self.target_sock.sendto(msg.encode(), self.target_addr)
+                                # 현재 카메라 위치
+                                start = (self.last_cam_world[0], self.last_cam_world[1])
+                                goal  = (tx, ty)
+
+                                start_g = astar.discretize(start)
+                                goal_g  = astar.discretize(goal)
+
+                                grid = astar.create_grid([], (24, 12))
+                                path = astar.astar(grid, start_g, goal_g)
+
+                                if path:
+                                    self.current_path = path
+                                    self.path_frozen = True
+                                    self.detected_targets = []   # 저장 버퍼 초기화
 
                             if self.publish_point:
                                 self.publish_point(Pw,"target")
@@ -471,6 +565,7 @@ class RealSenseLocalizationStreamer:
                 # Display
                 if self.show_windows:
                     cv2.imshow("Camera Stream", color)
+                    cv2.moveWindow("Camera Stream", 400, 200)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
 
