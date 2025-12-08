@@ -1,3 +1,4 @@
+
 import subprocess
 import time
 import os
@@ -9,12 +10,12 @@ ROS_DISTRO = "noetic"
 # 2. 메인으로 사용하는 catkin 워크스페이스의 절대 경로를 입력하세요.
 # 예: "/root/catkin_ws", "/home/your_user/catkin_ws"
 # 경로를 모를 경우, Ubuntu 터미널에서 'ls -d ~/*_ws/' 명령어로 찾아보세요.
-ROS_WORKSPACE_PATH = "/root/catkin_ws" 
-#ROS_WORKSPACE_PATH = "/home/password1234/catkin_ws"  # 절대경로 설정 필수!
+# ROS_WORKSPACE_PATH = "/root/catkin_ws" 
+ROS_WORKSPACE_PATH = "/home/password1234/catkin_ws"  # 절대경로 설정 필수!
 
 
 # 3. 터미널 실행 간 지연 시간 (초)
-DELAY_BETWEEN_TERMINALS = 2.0
+DELAY_BETWEEN_TERMINALS = 3.0
 
 # --- 스크립트 설정 ---
 # ROS 환경을 로드하는 명령어 문자열을 생성합니다.
@@ -34,7 +35,7 @@ commands = [
     f'{ros_setup_command}; usbipd.exe attach --wsl --busid 1-13 || true; cd project; python3 main.py; exec bash',
 
     # 4. 네번째 터미널: 컨트롤러 실행
-    f'{ros_setup_command}; cd {ROS_WORKSPACE_PATH}/src/yolo_kobuki_controller; python3 controller2.py; exec bash'
+    f'{ros_setup_command}; cd {ROS_WORKSPACE_PATH}/src/yolo_kobuki_controller/scripts; python3 controller4.py; exec bash'
 ]
 
 # --- 스크립트 실행 본문 ---
@@ -49,7 +50,7 @@ def main():
         terminal_num = i + 1
         print(f"\n[{terminal_num}/{len(commands)}] 번째 터미널을 실행합니다.")
         
-        wsl_command = f'start wsl.exe -d Ubuntu-20.04 -u root --cd ~ -e bash -c "{cmd}"'
+        wsl_command = f'start wsl.exe -d Ubuntu-20.04 -u password1234 --cd ~ -e bash -c "{cmd}"'
         
         try:
             subprocess.Popen(wsl_command, shell=True)
